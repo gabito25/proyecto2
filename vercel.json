@@ -9,8 +9,11 @@
       }
     },
     {
-      "src": "api/*.js",
-      "use": "@vercel/node"
+      "src": "api/package.json",
+      "use": "@vercel/node",
+      "config": {
+        "includeFiles": ["api/**"]
+      }
     }
   ],
   "routes": [
@@ -22,5 +25,13 @@
       "src": "/(.*)",
       "dest": "/frontend/dist/$1"
     }
-  ]
+  ],
+  "functions": {
+    "api/index.js": {
+      "maxDuration": 30
+    }
+  },
+  "env": {
+    "NODE_ENV": "production"
+  }
 }
