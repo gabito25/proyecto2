@@ -1,4 +1,3 @@
-// api/index.js - API completa para Vercel (unificada de tu estructura modular)
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -256,7 +255,19 @@ const authMiddleware = async (req, res, next) => {
 // RUTA DE SALUD
 // ===============================
 
-app.get('/api/health', (req, res) => {
+app.get('/', (req, res) => {
+  res.json({
+    status: 'OK',
+    timestamp: new Date().toISOString(),
+    version: '1.0.0',
+    services: {
+      mongodb: cachedDb ? 'connected' : 'disconnected',
+      firebase: admin.apps.length > 0 ? 'connected' : 'disconnected'
+    }
+  });
+});
+
+app.get('/health', (req, res) => {
   res.json({
     status: 'OK',
     timestamp: new Date().toISOString(),
