@@ -726,5 +726,17 @@ app.use('*', (req, res) => {
   });
 });
 
-// Para Vercel (Serverless)
+// ===============================
+// INICIAR SERVIDOR PARA RENDER
+// ===============================
+
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 Servidor BioRxiv API corriendo en puerto ${PORT}`);
+  console.log(`🌐 URL: http://localhost:${PORT}`);
+  console.log(`📱 Estado: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`🔗 Render URL: https://proyecto2-8dcb.onrender.com`);
+});
+
 module.exports = app;
