@@ -1,10 +1,11 @@
 {
   "version": 2,
-  "buildCommand": "cd frontend && npm install && npm run build",
-  "outputDirectory": "frontend/dist",
+  "cwd": "frontend",
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
   "installCommand": "npm install",
   "functions": {
-    "api/index.js": {
+    "../api/index.js": {
       "maxDuration": 30
     }
   },
