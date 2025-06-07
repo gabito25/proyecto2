@@ -1,5 +1,3 @@
-/// <reference types="vite/client" />
-
 // frontend/src/api.ts
 export interface Article {
   _id: string;
@@ -43,9 +41,9 @@ export interface AuthResponse {
 }
 
 // Configuración de la API
-const API_BASE_URL = import.meta.env.PROD 
-  ? 'https://tu-proyecto.vercel.app/api'  // Cambia esto por tu URL de Vercel
-  : 'http://localhost:3000/api';
+const API_BASE_URL = process.env.NODE_ENV === 'production' 
+  ? 'https://proyecto2-8dcb.onrender.com'  // Tu backend en Render
+  : 'http://localhost:3000';
 
 // Cliente HTTP básico
 class ApiClient {
