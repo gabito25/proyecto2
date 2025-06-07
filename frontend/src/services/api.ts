@@ -1,154 +1,42 @@
 import axios from 'axios';
 
-// ✅ DETERMINAR URL BASE SEGÚN ENTORNO
+// ✅ Configuración mejorada para Vercel
 const getBaseURL = () => {
-  // En producción (Vercel), usar rutas relativas
+  // En producción (Vercel), usar el dominio correcto
   if (import.meta.env.PROD) {
-    return '';
+    return 'https://biorxiv.vercel.app';
   }
   
-  // En desarrollo, usar el servidor local (CORREGIDO: puerto 3000)
+  // En desarrollo, usar el servidor local con prefijo /api
   return import.meta.env.VITE_API_URL || 'http://localhost:3000';
 };
 
-// ✅ URLs ESPECÍFICAS
-export const API_ENDPOINTS = {
-  // Auth
-  LOGIN: '/api/auth/login',
-  REGISTER: '/api/auth/registro', 
-  LOGOUT: '/api/auth/logout',
-  PROFILE: '/api/usuario/perfil',
-  
-  // Búsqueda
-  SEARCH_ARTICLES: '/api/busqueda/articulos',
-  GET_DOCUMENT: (id: string) => `/api/documento/${id}`,
-  
-  // Estadísticas
-  STATS: '/api/estadisticas/generales',
-  CATEGORIES: '/api/categorias',
-  TYPES: '/api/tipos',
-};
-
-// ✅ UTILIDAD PARA CONSTRUIR URLs
-export const buildApiUrl = (endpoint: string): string => {
-  const baseUrl = getBaseURL();
-  return `${baseUrl}${endpoint}`;
-};
-
-// Crear instancia de axios con configuración base
+// ✅ Configuración de axios con manejo de errores mejorado
 export const apiClient = axios.create({
   baseURL: getBaseURL(),
   timeout: 30000,
   headers: {
     'Content-Type': 'application/json',
+    'Accept': 'application/json'
   },
+  withCredentials: true // Para manejar cookies si es necesario
 });
 
-// Interceptor para agregar el token automáticamente
-apiClient.interceptors.request.use(
-  (config) => {
-    const token = localStorage.getItem('token');
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
-    }
-    return config;
-  },
-  (error) => {
-    return Promise.reject(error);
-  }
-);
-
-// Interceptor para manejar respuestas y errores
+// Interceptor para manejar errores globalmente
 apiClient.interceptors.response.use(
-  (response) => {
-    return response;
-  },
-  (error) => {
-    // Si el token es inválido, limpiar localStorage
+  response => response,
+  error => {
     if (error.response?.status === 401) {
+      // Manejo específico para errores de autenticación
       localStorage.removeItem('token');
-      localStorage.removeItem('usuario');
-      
-      // Opcional: redirigir al login
-      if (window.location.pathname !== '/login') {
-        window.location.href = '/login';
-      }
+      window.location.href = '/login';
+    }
+    
+    if (error.response?.status === 404) {
+      console.error('Endpoint no encontrado:', error.config.url);
+      // Redirigir a página de error o mostrar notificación
     }
     
     return Promise.reject(error);
   }
 );
-
-// ✅ FUNCIONES DE API ESPECÍFICAS (Mejoradas)
-export const authAPI = {
-  login: (email: string, password: string) =>
-    apiClient.post(API_ENDPOINTS.LOGIN, { email, password }),
-  
-  register: (email: string, password: string, nombre: string) =>
-    apiClient.post(API_ENDPOINTS.REGISTER, { email, password, nombre }),
-  
-  logout: () =>
-    apiClient.post(API_ENDPOINTS.LOGOUT),
-  
-  perfil: () =>
-    apiClient.get(API_ENDPOINTS.PROFILE),
-};
-
-export const busquedaAPI = {
-  articulos: (params: any) =>
-    apiClient.get(API_ENDPOINTS.SEARCH_ARTICLES, { params }),
-  
-  articuloPorId: (id: string) =>
-    apiClient.get(API_ENDPOINTS.GET_DOCUMENT(id)),
-};
-
-// ✅ PARA COMPATIBILIDAD CON CÓDIGO EXISTENTE
-export const authService = {
-  register: async (data: { nombre: string; email: string; password: string }) => {
-    const response = await authAPI.register(data.email, data.password, data.nombre);
-    return response.data;
-  }
-};
-
-// Tipos TypeScript (mantener los existentes)
-export interface Usuario {
-  id: string;
-  email: string;
-  nombre: string;
-  fechaRegistro?: string;
-  ultimoLogin?: string;
-}
-
-export interface RespuestaAPI<T = any> {
-  exito: boolean;
-  datos?: T;
-  usuario?: Usuario;
-  token?: string;
-  error?: string;
-  mensaje?: string;
-}
-
-export interface Articulo {
-  _id: string;
-  rel_title: string;
-  rel_doi?: string;
-  rel_link?: string;
-  rel_abs: string;
-  author_name: string;
-  author_inst?: string;
-  category: string;
-  type: string;
-  rel_date: string;
-  entities?: string[];
-  score?: number;
-  highlights?: any;
-}
-
-export interface ResultadosBusqueda {
-  total: number;
-  pagina: number;
-  limite: number;
-  totalPaginas: number;
-  resultados: Articulo[];
-  facetas: any;
-}

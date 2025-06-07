@@ -187,33 +187,60 @@ try {
 // MIDDLEWARE DE EXPRESS
 // ===============================
 
-// Middleware de parsing
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+// ===============================
+// MIDDLEWARE DE EXPRESS (CONFIGURACIÓN MEJORADA)
+// ===============================
 
-// Configuración de CORS para Vercel
-app.use(cors({
-  origin: true, // Permite todos los orígenes en Vercel
-  credentials: true
-}));
-
-// Middleware de seguridad
+// 1. MIDDLEWARES DE SEGURIDAD (Primeros en la cadena)
 app.use(helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" }
 }));
 
-// Rate limiting usando tu función
-const simpleRateLimit = (req, res, next) => {
-  if (rateLimitMiddleware(req, 100, 15 * 60 * 1000)) {
+// 2. CONFIGURACIÓN DE CORS (Única y completa)
+const allowedOrigins = [
+  'https://biorxiv.vercel.app',
+  'https://biorxiv-git-main-gabriels-projects-137ca855.vercel.app',
+  'http://localhost:5173' // Desarrollo
+];
+
+app.use(cors({
+  origin: function (origin, callback) {
+    // Permitir solicitudes sin origen (como mobile apps o curl)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) !== -1 || 
+        process.env.NODE_ENV !== 'production') {
+      callback(null, true);
+    } else {
+      callback(new Error('Origen no permitido por CORS'));
+    }
+  },
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  credentials: true,
+  maxAge: 86400 // Preflight cache por 24 horas
+}));
+
+// Manejo explícito de OPTIONS para preflight
+app.options('*', cors());
+
+// 3. MIDDLEWARES DE PARSING
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// 4. RATE LIMITING (Protección contra abuso)
+const rateLimitWindowMs = 15 * 60 * 1000; // 15 minutos
+const maxRequestsPerWindow = 100;
+
+app.use((req, res, next) => {
+  if (rateLimitMiddleware(req, maxRequestsPerWindow, rateLimitWindowMs)) {
     return res.status(429).json({
       exito: false,
       error: 'Demasiadas solicitudes. Intenta de nuevo más tarde.'
     });
   }
   next();
-};
-
-app.use(simpleRateLimit);
+});
 
 // ===============================
 // MIDDLEWARE DE AUTENTICACIÓN
@@ -373,7 +400,7 @@ app.post('/api/auth/registro', async (req, res) => {
   }
 });
 
-app.post('/api/auth/login', async (req, res) => {
+app.post('api/auth/login', async (req, res) => {
   try {
     // Rate limiting para login
     if (rateLimitMiddleware(req, 20, 900000)) {
