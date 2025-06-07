@@ -1,9 +1,3 @@
-require('dotenv').config();
-
-const serverless = require("serverless-http");
-const app = require("../index.js");
-module.exports = serverless(app);
-
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -13,7 +7,7 @@ const validator = require('validator');
 const { MongoClient, Db, ObjectId } = require('mongodb');
 const admin = require('firebase-admin');
 
-// Crear aplicación Express
+// Crear aplicación Express 
 const app = express();
 
 // Variables globales
@@ -1393,17 +1387,14 @@ app.use('*', (req, res) => {
 // INICIALIZACIÓN DEL SERVIDOR
 // ===============================
 
+// Para entornos locales
 const PORT = process.env.PORT || 3000;
-
-// Solo iniciar servidor si no estamos en Vercel
 if (process.env.NODE_ENV !== 'production') {
   app.listen(PORT, () => {
     console.log(`🚀 Servidor iniciado en puerto ${PORT}`);
-    console.log(`📡 Health check: http://localhost:${PORT}/api/health`);
-    console.log(`🔍 Búsqueda: http://localhost:${PORT}/api/busqueda/articulos`);
-    console.log(`🔐 Login: http://localhost:${PORT}/api/auth/login`);
   });
 }
 
-// Para Vercel, exportar la app directamente
-module.exports = app;
+// Para Vercel (Serverless)
+const serverless = require('serverless-http');
+module.exports.handler = serverless(app);
