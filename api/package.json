@@ -8,9 +8,10 @@
     "cors": "^2.8.5",
     "helmet": "^6.2.0",
     "jsonwebtoken": "^9.0.0",
-    "bcryptjs": "^2.4.3",
-    "validator": "^13.11.0",
     "mongodb": "^5.7.0",
-    "firebase-admin": "^11.11.1"
+    "firebase-admin": "^11.11.1",
+    "dotenv": "^16.5.0",
+    "bcryptjs": "^2.4.3",
+    "validator": "^13.11.0"
   }
 }
