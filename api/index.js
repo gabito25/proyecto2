@@ -1,4 +1,7 @@
-module.exports = require('../index.js');
+const serverless = require("serverless-http");
+const app = require("../index.js");
+module.exports = serverless(app);
+
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
