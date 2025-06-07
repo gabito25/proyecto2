@@ -1,0 +1,16 @@
+{
+  "name": "biorxiv-api-vercel",
+  "version": "1.0.0",
+  "description": "BioRxiv API para Vercel",
+  "main": "index.js",
+  "dependencies": {
+    "express": "^4.21.2",
+    "cors": "^2.8.5",
+    "helmet": "^6.2.0",
+    "jsonwebtoken": "^9.0.0",
+    "bcryptjs": "^2.4.3",
+    "validator": "^13.11.0",
+    "mongodb": "^5.7.0",
+    "firebase-admin": "^11.11.1"
+  }
+}

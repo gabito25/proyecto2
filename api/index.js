@@ -1,23 +1,196 @@
+// api/index.js - API completa para Vercel (unificada de tu estructura modular)
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
+const validator = require('validator');
 const { MongoClient, Db, ObjectId } = require('mongodb');
 const admin = require('firebase-admin');
 
+// Crear aplicación Express
 const app = express();
 
-// Verificar variables de entorno críticas
-console.log('🔍 Verificando variables de entorno...');
-const requiredEnvVars = ['MONGODB_URI', 'JWT_SECRET', 'FIREBASE_PROJECT_ID', 'FIREBASE_PRIVATE_KEY', 'FIREBASE_CLIENT_EMAIL'];
-const missingVars = requiredEnvVars.filter(varName => !process.env[varName]);
+// Variables globales
+let cachedDb = null;
+let mongoClient = null;
 
-if (missingVars.length > 0) {
-  console.error('❌ Variables de entorno faltantes:', missingVars);
-  throw new Error('Variables de entorno faltantes: ' + missingVars.join(', '));
+// ===============================
+// FUNCIONES DE VALIDACIÓN
+// ===============================
+
+function validarEmail(email) {
+  return validator.isEmail(email);
 }
 
-console.log('✅ Variables de entorno cargadas correctamente');
+function validarContraseña(contraseña) {
+  return contraseña && contraseña.length >= 6;
+}
+
+function validarNombre(nombre) {
+  return nombre && nombre.trim().length >= 2;
+}
+
+function limpiarEntrada(texto) {
+  return validator.escape(texto.trim());
+}
+
+// ===============================
+// FUNCIONES DE AUTENTICACIÓN
+// ===============================
+
+function generarToken(usuario) {
+  return jwt.sign(
+    { 
+      id: usuario.id, 
+      email: usuario.email,
+      nombre: usuario.nombre
+    },
+    process.env.JWT_SECRET,
+    { expiresIn: '7d' }
+  );
+}
+
+function verificarToken(token) {
+  try {
+    return jwt.verify(token, process.env.JWT_SECRET);
+  } catch (error) {
+    return null;
+  }
+}
+
+async function hashearContraseña(contraseña) {
+  return await bcrypt.hash(contraseña, 10);
+}
+
+async function compararContraseña(contraseña, hash) {
+  if (!contraseña || !hash) {
+    console.error('compararContraseña: parámetros inválidos');
+    return false;
+  }
+  return await bcrypt.compare(contraseña, hash);
+}
+
+// ===============================
+// RATE LIMITING
+// ===============================
+
+const solicitudesPorIP = new Map();
+
+function rateLimitMiddleware(req, limite = 100, ventana = 60000) {
+  const ip = req.headers['x-forwarded-for'] || req.connection?.remoteAddress || 'unknown';
+  const ahora = Date.now();
+  
+  if (!solicitudesPorIP.has(ip)) {
+    solicitudesPorIP.set(ip, { count: 1, resetTime: ahora + ventana });
+    return false;
+  }
+  
+  const datos = solicitudesPorIP.get(ip);
+  
+  if (ahora > datos.resetTime) {
+    datos.count = 1;
+    datos.resetTime = ahora + ventana;
+    return false;
+  }
+  
+  datos.count++;
+  
+  if (datos.count > limite) {
+    return true;
+  }
+  
+  return false;
+}
+
+// ===============================
+// CONFIGURACIÓN DE MONGODB
+// ===============================
+
+async function connectToMongoDB() {
+  try {
+    if (cachedDb && mongoClient) {
+      return cachedDb;
+    }
+
+    if (!process.env.MONGODB_URI) {
+      throw new Error('MONGODB_URI no está configurado');
+    }
+
+    console.log('🍃 Conectando a MongoDB...');
+
+    // Configuración optimizada para MongoDB Atlas
+    const options = {
+      maxPoolSize: 10,
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000,
+      family: 4
+    };
+
+    if (!mongoClient) {
+      mongoClient = new MongoClient(process.env.MONGODB_URI, options);
+      await mongoClient.connect();
+    }
+
+    cachedDb = mongoClient.db('bioRxivDB');
+    console.log('✅ MongoDB conectado exitosamente');
+    
+    return cachedDb;
+
+  } catch (error) {
+    console.error('❌ Error conectando a MongoDB:', error);
+    throw new Error(`Error de conexión MongoDB: ${error.message}`);
+  }
+}
+
+// ===============================
+// CONFIGURACIÓN DE FIREBASE
+// ===============================
+
+console.log('🔥 Inicializando Firebase...');
+
+let db;
+
+try {
+  // Verificar si Firebase ya está inicializado
+  if (!admin.apps.length) {
+    // Opción 1: Usar JSON completo (RECOMENDADO)
+    if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+      const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+      admin.initializeApp({
+        credential: admin.credential.cert(serviceAccount)
+      });
+    }
+    // Opción 2: Usar variables separadas (FALLBACK)
+    else if (process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY) {
+      admin.initializeApp({
+        credential: admin.credential.cert({
+          projectId: process.env.FIREBASE_PROJECT_ID,
+          clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+          privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n')
+        })
+      });
+    } else {
+      throw new Error('Firebase credentials not configured properly');
+    }
+  }
+
+  // Obtener instancia de Firestore
+  db = admin.firestore();
+  console.log('✅ Firebase y Firestore inicializados exitosamente');
+
+} catch (error) {
+  console.error('❌ Error inicializando Firebase:', error);
+  throw error;
+}
+
+// ===============================
+// MIDDLEWARE DE EXPRESS
+// ===============================
+
+// Middleware de parsing
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Configuración de CORS para Vercel
 app.use(cors({
@@ -30,182 +203,18 @@ app.use(helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" }
 }));
 
-// Rate limiting simple
-let requestCounts = {};
-
+// Rate limiting usando tu función
 const simpleRateLimit = (req, res, next) => {
-  const ip = req.ip || req.connection.remoteAddress;
-  const now = Date.now();
-  const windowMs = 15 * 60 * 1000; // 15 minutos
-  const maxRequests = 100;
-
-  if (!requestCounts[ip] || now > requestCounts[ip].resetTime) {
-    requestCounts[ip] = { count: 1, resetTime: now + windowMs };
-  } else {
-    requestCounts[ip].count++;
-  }
-
-  if (requestCounts[ip].count > maxRequests) {
+  if (rateLimitMiddleware(req, 100, 15 * 60 * 1000)) {
     return res.status(429).json({
       exito: false,
       error: 'Demasiadas solicitudes. Intenta de nuevo más tarde.'
     });
   }
-
   next();
 };
 
-app.use('/api/', simpleRateLimit);
-
-// Middleware para parsear JSON
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-
-// Variables globales
-let cachedDb = null;
-let mongoClient = null;
-
-// ===============================
-// CONFIGURACIÓN DE FIREBASE
-// ===============================
-
-console.log('🔥 Inicializando Firebase...');
-
-try {
-  // Verificar si Firebase ya está inicializado
-  if (!admin.apps.length) {
-    const firebaseConfig = {
-      projectId: process.env.FIREBASE_PROJECT_ID,
-      privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-    };
-
-    admin.initializeApp({
-      credential: admin.credential.cert(firebaseConfig)
-    });
-  }
-
-  console.log('✅ Firebase inicializado exitosamente');
-} catch (error) {
-  console.error('❌ Error inicializando Firebase:', error);
-  throw error;
-}
-
-// ===============================
-// SERVICIOS DE FIREBASE
-// ===============================
-
-class FirebaseService {
-  static async createUser(nombre, email, password) {
-    try {
-      console.log('🔥 Creando usuario en Firebase:', email);
-
-      const userRecord = await admin.auth().createUser({
-        email,
-        password,
-        displayName: nombre,
-        emailVerified: false
-      });
-
-      console.log('✅ Usuario creado en Firebase:', userRecord.uid);
-
-      return {
-        success: true,
-        uid: userRecord.uid,
-        email: userRecord.email,
-        nombre: userRecord.displayName
-      };
-
-    } catch (error) {
-      console.error('❌ Error creando usuario en Firebase:', error);
-      
-      let errorMessage = 'Error al crear usuario';
-      if (error.code === 'auth/email-already-exists') {
-        errorMessage = 'El email ya está registrado';
-      } else if (error.code === 'auth/invalid-email') {
-        errorMessage = 'Email inválido';
-      } else if (error.code === 'auth/weak-password') {
-        errorMessage = 'La contraseña es muy débil';
-      }
-
-      return {
-        success: false,
-        error: errorMessage
-      };
-    }
-  }
-
-  static async verifyUser(email) {
-    try {
-      console.log('🔍 Verificando usuario en Firebase:', email);
-
-      const userRecord = await admin.auth().getUserByEmail(email);
-
-      return {
-        success: true,
-        uid: userRecord.uid,
-        email: userRecord.email,
-        nombre: userRecord.displayName || 'Usuario'
-      };
-
-    } catch (error) {
-      console.error('❌ Error verificando usuario:', error);
-      
-      return {
-        success: false,
-        error: 'Usuario no encontrado'
-      };
-    }
-  }
-
-  static async deleteUser(uid) {
-    try {
-      await admin.auth().deleteUser(uid);
-      return { success: true };
-    } catch (error) {
-      console.error('Error eliminando usuario:', error);
-      return { success: false, error: 'Error al eliminar usuario' };
-    }
-  }
-}
-
-// ===============================
-// CONEXIÓN A MONGODB
-// ===============================
-
-async function connectToMongoDB() {
-  if (cachedDb) {
-    return cachedDb;
-  }
-
-  try {
-    const uri = process.env.MONGODB_URI;
-    if (!uri) {
-      throw new Error('MONGODB_URI no está definida en las variables de entorno');
-    }
-
-    console.log('🔗 Conectando a MongoDB Atlas...');
-    
-    mongoClient = new MongoClient(uri);
-    await mongoClient.connect();
-    
-    const db = mongoClient.db('bioRxivDB');
-    cachedDb = db;
-    
-    console.log('✅ Conectado a MongoDB Atlas - bioRxivDB');
-    
-    // Verificar documentos disponibles
-    const collection = db.collection('documents');
-    const count = await collection.countDocuments();
-    console.log(`📊 Documentos disponibles: ${count}`);
-    
-    return db;
-    
-  } catch (error) {
-    console.error('❌ Error conectando a MongoDB:', error);
-    throw error;
-  }
-}
+app.use(simpleRateLimit);
 
 // ===============================
 // MIDDLEWARE DE AUTENTICACIÓN
@@ -213,17 +222,8 @@ async function connectToMongoDB() {
 
 const authMiddleware = async (req, res, next) => {
   try {
-    const authHeader = req.headers.authorization;
+    const token = req.headers.authorization?.replace('Bearer ', '');
     
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({
-        exito: false,
-        error: 'Token de autorización requerido'
-      });
-    }
-
-    const token = authHeader.slice(7);
-
     if (!token) {
       return res.status(401).json({
         exito: false,
@@ -231,27 +231,20 @@ const authMiddleware = async (req, res, next) => {
       });
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = verificarToken(token);
+    if (!decoded) {
+      return res.status(401).json({
+        exito: false,
+        error: 'Token inválido o expirado'
+      });
+    }
+
     req.user = decoded;
     next();
 
   } catch (error) {
     console.error('❌ Error en authMiddleware:', error);
     
-    if (error instanceof jwt.JsonWebTokenError) {
-      return res.status(401).json({
-        exito: false,
-        error: 'Token inválido'
-      });
-    }
-    
-    if (error instanceof jwt.TokenExpiredError) {
-      return res.status(401).json({
-        exito: false,
-        error: 'Token expirado'
-      });
-    }
-
     return res.status(500).json({
       exito: false,
       error: 'Error interno del servidor'
@@ -260,99 +253,92 @@ const authMiddleware = async (req, res, next) => {
 };
 
 // ===============================
-// RUTAS DE PRUEBA
+// RUTA DE SALUD
 // ===============================
 
-app.get('/api/test/server', (req, res) => {
+app.get('/api/health', (req, res) => {
   res.json({
-    exito: true,
-    mensaje: 'Servidor funcionando correctamente',
-    timestamp: new Date().toISOString()
+    status: 'OK',
+    timestamp: new Date().toISOString(),
+    version: '1.0.0',
+    services: {
+      mongodb: cachedDb ? 'connected' : 'disconnected',
+      firebase: admin.apps.length > 0 ? 'connected' : 'disconnected'
+    }
   });
 });
 
-app.get('/api/test/atlas-search', async (req, res) => {
-  try {
-    const db = await connectToMongoDB();
-    const collection = db.collection('documents');
-    
-    // Test básico de Atlas Search
-    const pipeline = [
-      {
-        $search: {
-          index: "doc_index",
-          wildcard: {
-            query: "*",
-            path: "rel_title"
-          }
-        }
-      },
-      { $limit: 1 }
-    ];
-
-    const resultado = await collection.aggregate(pipeline).toArray();
-    
-    res.json({
-      exito: true,
-      mensaje: '✅ Atlas Search funcionando correctamente',
-      tests: {
-        wildcard_search: {
-          funciona: true,
-          resultados: resultado.length,
-          muestra: resultado[0] || null
-        }
-      },
-      configuracion: {
-        indice: "doc_index",
-        base_datos: "bioRxivDB",
-        coleccion: "documents"
-      }
-    });
-
-  } catch (error) {
-    console.error('❌ Error en test de Atlas Search:', error);
-    res.status(500).json({
-      exito: false,
-      error: 'Error en Atlas Search',
-      detalles: error.message
-    });
-  }
-});
-
 // ===============================
-// RUTAS DE AUTENTICACIÓN
+// RUTAS DE AUTENTICACIÓN (usando tu estructura Firestore)
 // ===============================
 
 app.post('/api/auth/registro', async (req, res) => {
   try {
-    const { nombre, email, password } = req.body;
+    // Rate limiting para registro
+    if (rateLimitMiddleware(req, 10, 3600000)) {
+      return res.status(429).json({ 
+        exito: false, 
+        error: 'Demasiadas solicitudes. Intenta más tarde.' 
+      });
+    }
+
+    const { email, password, nombre } = req.body;
 
     console.log('📝 Solicitud de registro:', { nombre, email });
 
-    // Validaciones
-    if (!nombre || !email || !password) {
-      return res.status(400).json({
-        exito: false,
-        error: 'Todos los campos son requeridos'
+    // Validaciones usando tus funciones
+    if (!validarEmail(email)) {
+      return res.status(400).json({ 
+        exito: false, 
+        error: 'Email inválido' 
       });
     }
 
-    if (password.length < 6) {
-      return res.status(400).json({
-        exito: false,
-        error: 'La contraseña debe tener al menos 6 caracteres'
+    if (!validarContraseña(password)) {
+      return res.status(400).json({ 
+        exito: false, 
+        error: 'La contraseña debe tener al menos 6 caracteres' 
       });
     }
 
-    // Crear usuario en Firebase
-    const result = await FirebaseService.createUser(nombre, email, password);
-
-    if (!result.success) {
-      return res.status(400).json({
-        exito: false,
-        error: result.error
+    if (!validarNombre(nombre)) {
+      return res.status(400).json({ 
+        exito: false, 
+        error: 'El nombre debe tener al menos 2 caracteres' 
       });
     }
+
+    // Verificar si el usuario ya existe
+    const usuariosRef = db.collection('usuarios');
+    const usuarioExistente = await usuariosRef
+      .where('email', '==', email.toLowerCase())
+      .get();
+
+    if (!usuarioExistente.empty) {
+      return res.status(400).json({ 
+        exito: false, 
+        error: 'El email ya está registrado' 
+      });
+    }
+
+    // Crear nuevo usuario
+    const nuevoUsuario = {
+      email: email.toLowerCase(),
+      contraseña: await hashearContraseña(password),
+      nombre: limpiarEntrada(nombre),
+      fechaRegistro: new Date().toISOString(),
+      activo: true
+    };
+
+    const docRef = await usuariosRef.add(nuevoUsuario);
+    const usuarioId = docRef.id;
+
+    // Generar token
+    const token = generarToken({
+      id: usuarioId,
+      email: nuevoUsuario.email,
+      nombre: nuevoUsuario.nombre
+    });
 
     console.log('✅ Usuario registrado exitosamente:', email);
 
@@ -360,10 +346,11 @@ app.post('/api/auth/registro', async (req, res) => {
       exito: true,
       mensaje: 'Usuario registrado exitosamente',
       usuario: {
-        id: result.uid,
-        nombre: result.nombre,
-        email: result.email
-      }
+        id: usuarioId,
+        email: nuevoUsuario.email,
+        nombre: nuevoUsuario.nombre
+      },
+      token
     });
 
   } catch (error) {
@@ -377,6 +364,14 @@ app.post('/api/auth/registro', async (req, res) => {
 
 app.post('/api/auth/login', async (req, res) => {
   try {
+    // Rate limiting para login
+    if (rateLimitMiddleware(req, 20, 900000)) {
+      return res.status(429).json({ 
+        exito: false, 
+        error: 'Demasiados intentos. Intenta más tarde.' 
+      });
+    }
+
     const { email, password } = req.body;
 
     console.log('🔐 Solicitud de login:', { email });
@@ -389,42 +384,60 @@ app.post('/api/auth/login', async (req, res) => {
       });
     }
 
-    // Verificar usuario en Firebase
-    const result = await FirebaseService.verifyUser(email);
-
-    if (!result.success) {
-      return res.status(401).json({
-        exito: false,
-        error: 'Credenciales inválidas'
+    if (!validarEmail(email)) {
+      return res.status(400).json({ 
+        exito: false, 
+        error: 'Email inválido' 
       });
     }
 
-    // Generar JWT
-    const jwtSecret = process.env.JWT_SECRET;
-    if (!jwtSecret) {
-      throw new Error('JWT_SECRET no está configurado');
+    // Buscar usuario en Firestore
+    const usuariosRef = db.collection('usuarios');
+    const snapshot = await usuariosRef
+      .where('email', '==', email.toLowerCase())
+      .where('activo', '==', true)
+      .limit(1)
+      .get();
+
+    if (snapshot.empty) {
+      return res.status(401).json({ 
+        exito: false, 
+        error: 'Credenciales inválidas' 
+      });
     }
 
-    const payload = {
-      uid: result.uid,
-      email: result.email,
-      nombre: result.nombre
-    };
+    const doc = snapshot.docs[0];
+    const usuario = { id: doc.id, ...doc.data() };
 
-    const options = {
-      expiresIn: process.env.JWT_EXPIRES_IN || '7d'
-    };
+    // Verificar contraseña
+    const contraseñaValida = await compararContraseña(password, usuario.contraseña);
+    if (!contraseñaValida) {
+      return res.status(401).json({ 
+        exito: false, 
+        error: 'Credenciales inválidas' 
+      });
+    }
 
-    const token = jwt.sign(payload, jwtSecret, options);
+    // Actualizar último login
+    await doc.ref.update({
+      ultimoLogin: new Date().toISOString()
+    });
+
+    // Generar token
+    const token = generarToken({
+      id: usuario.id,
+      email: usuario.email,
+      nombre: usuario.nombre
+    });
 
     console.log('✅ Login exitoso para:', email);
 
     res.json({
       exito: true,
       usuario: {
-        id: result.uid,
-        nombre: result.nombre,
-        email: result.email
+        id: usuario.id,
+        nombre: usuario.nombre,
+        email: usuario.email
       },
       token
     });
@@ -440,15 +453,15 @@ app.post('/api/auth/login', async (req, res) => {
 
 app.post('/api/auth/logout', authMiddleware, async (req, res) => {
   try {
-    console.log(`🚪 Logout exitoso para usuario: ${req.user.uid}`);
-    
+    console.log('🚪 Logout para usuario:', req.user.email);
+
     res.json({
       exito: true,
       mensaje: 'Sesión cerrada exitosamente'
     });
 
   } catch (error) {
-    console.error('Error en logout:', error);
+    console.error('❌ Error en logout:', error);
     res.status(500).json({
       exito: false,
       error: 'Error interno del servidor'
@@ -457,26 +470,32 @@ app.post('/api/auth/logout', authMiddleware, async (req, res) => {
 });
 
 // ===============================
-// RUTAS DE USUARIO
+// RUTAS DE USUARIO (usando Firestore)
 // ===============================
 
 app.get('/api/usuario/perfil', authMiddleware, async (req, res) => {
   try {
-    const result = await FirebaseService.verifyUser(req.user.email);
+    const usuarioDoc = await db.collection('usuarios')
+      .doc(req.user.id)
+      .get();
 
-    if (!result.success) {
-      return res.status(404).json({
-        exito: false,
-        error: 'Usuario no encontrado'
+    if (!usuarioDoc.exists) {
+      return res.status(404).json({ 
+        exito: false, 
+        error: 'Usuario no encontrado' 
       });
     }
+
+    const usuario = usuarioDoc.data();
 
     res.json({
       exito: true,
       datos: {
-        id: result.uid,
-        nombre: result.nombre,
-        email: result.email
+        id: req.user.id,
+        email: usuario.email,
+        nombre: usuario.nombre,
+        fechaRegistro: usuario.fechaRegistro,
+        ultimoLogin: usuario.ultimoLogin
       }
     });
 
@@ -489,210 +508,402 @@ app.get('/api/usuario/perfil', authMiddleware, async (req, res) => {
   }
 });
 
-app.get('/api/usuario/historial', authMiddleware, async (req, res) => {
-  try {
-    // Implementar historial de búsquedas si es necesario
-    res.json({
-      exito: true,
-      datos: [],
-      mensaje: 'Historial no implementado aún'
-    });
-
-  } catch (error) {
-    console.error('Error obteniendo historial:', error);
-    res.status(500).json({
-      exito: false,
-      error: 'Error interno del servidor'
-    });
-  }
-});
-
 // ===============================
-// RUTAS DE BÚSQUEDA
+// RUTAS DE BÚSQUEDA (tu código Atlas Search avanzado)
 // ===============================
 
 app.get('/api/busqueda/articulos', authMiddleware, async (req, res) => {
   try {
-    const { q, autor, desde, hasta, pagina = 1, limite = 10 } = req.query;
-    
-    console.log('🔍 Búsqueda Atlas Search:', { q, autor, desde, hasta, pagina, limite });
+    const { 
+      q = '', 
+      pagina = 1, 
+      limite = 20,
+      categoria,
+      tipo,
+      autor,
+      fecha,
+      entidades
+    } = req.query;
 
-    const db = await connectToMongoDB();
-    const collection = db.collection('documents');
+    const paginaNum = parseInt(pagina);
+    const limiteNum = Math.min(parseInt(limite), 100);
+    const skip = (paginaNum - 1) * limiteNum;
 
-    // PIPELINE DE ATLAS SEARCH
+    console.log('🔍 Búsqueda Universal Atlas Search:', { q, autor, categoria, pagina: paginaNum });
+
+    const mongoDb = await connectToMongoDB();
+    const collection = mongoDb.collection('documents');
+
     const pipeline = [];
 
-    const searchStage = {
-      index: "doc_index",
-      compound: {
-        should: []
-      },
-      highlight: {
-        path: ["rel_title", "rel_abs", "category", "type", "rel_site"]
+    // ✅ BÚSQUEDA UNIVERSAL EN TODOS LOS CAMPOS REALES
+    if (q && q.toString().trim()) {
+      const busquedaLimpia = limpiarEntrada(q.toString());
+      
+      pipeline.push({
+        $search: {
+          index: "doc_index",
+          compound: {
+            should: [
+              // 🎯 BÚSQUEDA EN TÍTULO (Prioridad máxima)
+              {
+                text: {
+                  query: busquedaLimpia,
+                  path: "rel_title",
+                  fuzzy: { 
+                    maxEdits: 2,
+                    prefixLength: 1
+                  },
+                  score: { boost: { value: 5.0 } }
+                }
+              },
+              // 🎯 BÚSQUEDA EN ABSTRACT (Prioridad alta)
+              {
+                text: {
+                  query: busquedaLimpia,
+                  path: "rel_abs",
+                  fuzzy: { 
+                    maxEdits: 2,
+                    prefixLength: 1
+                  },
+                  score: { boost: { value: 3.0 } }
+                }
+              },
+              // 🎯 BÚSQUEDA EN CATEGORÍA (Exacta)
+              {
+                text: {
+                  query: busquedaLimpia,
+                  path: "category",
+                  score: { boost: { value: 4.0 } }
+                }
+              },
+              // 🎯 BÚSQUEDA EN TIPO DE PUBLICACIÓN
+              {
+                text: {
+                  query: busquedaLimpia,
+                  path: "type",
+                  score: { boost: { value: 2.5 } }
+                }
+              },
+              // 🎯 BÚSQUEDA EN SITIO (medRxiv, bioRxiv, etc.)
+              {
+                text: {
+                  query: busquedaLimpia,
+                  path: "rel_site",
+                  score: { boost: { value: 2.0 } }
+                }
+              },
+              // 🎯 BÚSQUEDA EN AUTORES (Array)
+              {
+                text: {
+                  query: busquedaLimpia,
+                  path: "rel_authors",
+                  fuzzy: { maxEdits: 1 },
+                  score: { boost: { value: 2.0 } }
+                }
+              },
+              // 🎯 BÚSQUEDA EN DOI
+              {
+                text: {
+                  query: busquedaLimpia,
+                  path: "rel_doi",
+                  score: { boost: { value: 1.5 } }
+                }
+              },
+              // 🎯 BÚSQUEDA EN JOBID
+              {
+                text: {
+                  query: busquedaLimpia,
+                  path: "jobId",
+                  score: { boost: { value: 1.0 } }
+                }
+              },
+              // 🎯 BÚSQUEDA WILDCARD AMPLIA
+              {
+                wildcard: {
+                  query: `*${busquedaLimpia}*`,
+                  path: ["rel_title", "rel_abs", "category"],
+                  score: { boost: { value: 1.2 } }
+                }
+              }
+            ],
+            minimumShouldMatch: 1
+          },
+          // ✅ HIGHLIGHTING EN CAMPOS REALES
+          highlight: {
+            path: ["rel_title", "rel_abs", "category", "type", "rel_site", "rel_authors"]
+          }
+        }
+      });
+
+      pipeline.push({
+        $addFields: {
+          score: { $meta: "searchScore" },
+          highlights: { $meta: "searchHighlights" }
+        }
+      });
+    } else {
+      // ✅ SIN BÚSQUEDA - MOSTRAR DOCUMENTOS RECIENTES
+      pipeline.push({
+        $search: {
+          index: "doc_index",
+          wildcard: {
+            query: "*",
+            path: "rel_title"
+          }
+        }
+      });
+      
+      pipeline.push({
+        $addFields: {
+          score: { $meta: "searchScore" }
+        }
+      });
+    }
+
+    // ✅ FILTROS AVANZADOS PARA TUS CAMPOS REALES
+    const filtros = {};
+    
+    if (categoria) {
+      filtros.category = { $regex: categoria, $options: 'i' };
+    }
+    if (tipo) {
+      filtros.type = { $regex: tipo, $options: 'i' };
+    }
+    if (autor) {
+      filtros.rel_authors = { $regex: autor, $options: 'i' };
+    }
+    if (fecha) {
+      // Buscar por año en formato dd/mm/yyyy
+      filtros.$or = [
+        { rel_date: { $regex: fecha } },
+        { rel_date: { $regex: `/${fecha}` } },
+        { rel_date: { $regex: `${fecha}/` } }
+      ];
+    }
+    if (entidades) {
+      const entidadesList = entidades.split(',').map(e => e.trim());
+      filtros.entities = { $in: entidadesList };
+    }
+
+    if (Object.keys(filtros).length > 0) {
+      pipeline.push({ $match: filtros });
+    }
+
+    // ✅ AGGREGATION CON FACETAS COMPLETAS
+    pipeline.push({
+      $facet: {
+        metadata: [
+          { $count: 'total' },
+          { $addFields: { 
+            pagina: paginaNum,
+            limite: limiteNum,
+            totalPaginas: { $ceil: { $divide: ['$total', limiteNum] } }
+          }}
+        ],
+        datos: [
+          { $sort: q ? { score: -1, rel_date: -1 } : { rel_date: -1 } },
+          { $skip: skip },
+          { $limit: limiteNum },
+          { $project: {
+            _id: 1,
+            rel_title: 1,
+            rel_abs: 1,
+            rel_date: 1,
+            rel_doi: 1,
+            rel_link: 1,
+            rel_site: 1,
+            rel_num_authors: 1,
+            rel_authors: { $slice: ['$rel_authors', 10] }, // Primeros 10 autores
+            version: 1,
+            license: 1,
+            category: 1,
+            type: 1,
+            entities: 1,
+            jobId: 1,
+            content: 1,
+            score: 1,
+            highlights: 1,
+            // ✅ CAMPOS CALCULADOS PARA COMPATIBILIDAD CON FRONTEND
+            author_name: { 
+              $cond: {
+                if: { $gt: [{ $size: { $ifNull: ['$rel_authors', []] } }, 0] },
+                then: { $arrayElemAt: ['$rel_authors', 0] },
+                else: 'Autor desconocido'
+              }
+            },
+            resumen: { 
+              $cond: {
+                if: { $ne: ['$rel_abs', ''] },
+                then: { $substr: ['$rel_abs', 0, 300] },
+                else: 'Sin resumen disponible'
+              }
+            }
+          }}
+        ],
+        // ✅ FACETAS COMPLETAS
+        facetas: [
+          { $sample: { size: 2000 } }, // Muestra para facetas
+          { $group: {
+            _id: null,
+            categorias: { $addToSet: '$category' },
+            tipos: { $addToSet: '$type' },
+            sitios: { $addToSet: '$rel_site' },
+            licencias: { $addToSet: '$license' },
+            años: { 
+              $addToSet: { 
+                $cond: {
+                  if: { $ne: ['$rel_date', ''] },
+                  then: { $substr: ['$rel_date', 6, 4] }, // Formato dd/mm/yyyy
+                  else: null
+                }
+              }
+            },
+            autoresFlat: { $push: '$rel_authors' },
+            entidadesFlat: { $push: '$entities' },
+            totalDocs: { $sum: 1 }
+          }},
+          { $project: {
+            categorias: { 
+              $filter: { 
+                input: '$categorias', 
+                cond: { $and: [{ $ne: ['$$this', null] }, { $ne: ['$$this', ''] }] }
+              }
+            },
+            tipos: { 
+              $filter: { 
+                input: '$tipos', 
+                cond: { $and: [{ $ne: ['$$this', null] }, { $ne: ['$$this', ''] }] }
+              }
+            },
+            sitios: { 
+              $filter: { 
+                input: '$sitios', 
+                cond: { $and: [{ $ne: ['$$this', null] }, { $ne: ['$$this', ''] }] }
+              }
+            },
+            autores: { 
+              $slice: [{
+                $filter: { 
+                  input: {
+                    $reduce: {
+                      input: '$autoresFlat',
+                      initialValue: [],
+                      in: { $setUnion: ['$$value', '$$this'] }
+                    }
+                  },
+                  cond: { $and: [{ $ne: ['$$this', null] }, { $ne: ['$$this', ''] }] }
+                }
+              }, 50]
+            },
+            años: { 
+              $filter: { 
+                input: '$años', 
+                cond: { $and: [{ $ne: ['$$this', null] }, { $ne: ['$$this', ''] }] }
+              }
+            },
+            entidades: {
+              $slice: [{
+                $filter: {
+                  input: {
+                    $reduce: {
+                      input: '$entidadesFlat',
+                      initialValue: [],
+                      in: { $setUnion: ['$$value', '$$this'] }
+                    }
+                  },
+                  cond: { $and: [{ $ne: ['$$this', null] }, { $ne: ['$$this', ''] }] }
+                }
+              }, 50]
+            },
+            totalDocs: 1
+          }}
+        ]
+      }
+    });
+
+    console.log('🔍 Pipeline Universal ejecutándose...');
+
+    const resultados = await collection.aggregate(pipeline).toArray();
+    
+    if (!resultados || resultados.length === 0) {
+      return res.status(200).json({
+        exito: true,
+        datos: [],
+        total: 0,
+        pagina: paginaNum,
+        limite: limiteNum,
+        totalPaginas: 0,
+        facetas: {},
+        mensaje: 'No se encontraron resultados'
+      });
+    }
+
+    const metadata = resultados[0].metadata[0] || { 
+      total: 0, 
+      pagina: paginaNum, 
+      limite: limiteNum,
+      totalPaginas: 0 
+    };
+    
+    const datos = resultados[0].datos || [];
+    const facetasRaw = resultados[0].facetas[0] || {};
+
+    // ✅ PROCESAMIENTO DE FACETAS
+    const facetas = {
+      categorias: (facetasRaw.categorias || [])
+        .filter(c => c && c.trim())
+        .sort()
+        .slice(0, 25),
+      tipos: (facetasRaw.tipos || [])
+        .filter(t => t && t.trim())
+        .sort()
+        .slice(0, 15),
+      sitios: (facetasRaw.sitios || [])
+        .filter(s => s && s.trim())
+        .sort()
+        .slice(0, 10),
+      autores: (facetasRaw.autores || [])
+        .filter(a => a && a.trim())
+        .sort()
+        .slice(0, 30),
+      años: (facetasRaw.años || [])
+        .filter(y => y && y.trim() && y.length === 4)
+        .sort()
+        .reverse(), // Años más recientes primero
+      entidades: (facetasRaw.entidades || [])
+        .filter(e => e && e.trim())
+        .sort()
+        .slice(0, 50),
+      estadisticas: {
+        totalDocumentos: facetasRaw.totalDocs || 0,
+        categoriasDisponibles: (facetasRaw.categorias || []).length,
+        autoresDisponibles: (facetasRaw.autores || []).length,
+        sitiosDisponibles: (facetasRaw.sitios || []).length
       }
     };
 
-    if (q && q.toString().trim()) {
-      const searchTerm = q.toString().trim();
-      
-      // Búsqueda por separado en cada campo (OR lógico)
-      searchStage.compound.should.push(
-        // Búsqueda en título (prioridad máxima)
-        {
-          text: {
-            query: searchTerm,
-            path: "rel_title",
-            fuzzy: { maxEdits: 2 },
-            score: { boost: { value: 3.0 } }
-          }
-        },
-        // Búsqueda en abstract (prioridad alta)
-        {
-          text: {
-            query: searchTerm,
-            path: "rel_abs",
-            fuzzy: { maxEdits: 2 },
-            score: { boost: { value: 2.5 } }
-          }
-        },
-        // Búsqueda en categoría
-        {
-          text: {
-            query: searchTerm,
-            path: "category",
-            fuzzy: { maxEdits: 1 },
-            score: { boost: { value: 2.0 } }
-          }
-        },
-        // Búsqueda en tipo de publicación
-        {
-          text: {
-            query: searchTerm,
-            path: "type",
-            score: { boost: { value: 1.8 } }
-          }
-        },
-        // Búsqueda en sitio
-        {
-          text: {
-            query: searchTerm,
-            path: "rel_site",
-            score: { boost: { value: 1.5 } }
-          }
-        },
-        // Búsqueda en autores
-        {
-          text: {
-            query: searchTerm,
-            path: "rel_authors",
-            fuzzy: { maxEdits: 1 },
-            score: { boost: { value: 1.7 } }
-          }
-        },
-        // Búsqueda en DOI
-        {
-          text: {
-            query: searchTerm,
-            path: "rel_doi",
-            score: { boost: { value: 1.0 } }
-          }
-        }
-      );
-      
-      searchStage.compound.minimumShouldMatch = 1;
-      
-    } else {
-      // Si no hay término de búsqueda, mostrar documentos que tengan título
-      searchStage.compound.should.push({
-        exists: {
-          path: "rel_title"
-        }
-      });
-      searchStage.compound.minimumShouldMatch = 1;
-    }
+    console.log(`✅ Búsqueda Universal Exitosa: ${datos.length}/${metadata.total} documentos`);
 
-    // Filtro por autor
-    if (autor && autor.toString().trim()) {
-      if (!searchStage.compound.must) {
-        searchStage.compound.must = [];
-      }
-      searchStage.compound.must.push({
-        text: {
-          query: autor.toString().trim(),
-          path: "rel_authors"
-        }
-      });
-    }
-
-    pipeline.push({ $search: searchStage });
-
-    // Agregar metadatos de score
-    pipeline.push({
-      $addFields: {
-        score: { $meta: "searchScore" },
-        highlights: { $meta: "searchHighlights" }
-      }
-    });
-
-    // Paginación
-    const skip = (parseInt(pagina) - 1) * parseInt(limite);
-    const limitValue = Math.min(parseInt(limite), 50);
-
-    pipeline.push({ $skip: skip });
-    pipeline.push({ $limit: limitValue });
-
-    console.log('🔍 Pipeline Atlas Search:', JSON.stringify(pipeline, null, 2));
-
-    // Ejecutar búsqueda
-    const resultados = await collection.aggregate(pipeline).toArray();
-
-    // Contar total de resultados
-    const countPipeline = [{ $search: searchStage }, { $count: "total" }];
-    const conteoResultados = await collection.aggregate(countPipeline).toArray();
-    const total = conteoResultados.length > 0 ? conteoResultados[0].total : 0;
-
-    console.log(`📊 Atlas Search: ${total} documentos encontrados, mostrando ${resultados.length}`);
-
-    // Formatear resultados
-    const resultadosFormateados = resultados.map((doc) => ({
-      _id: doc._id,
-      rel_title: doc.rel_title || `Documento ${doc.jobId}` || 'Sin título',
-      rel_abs: doc.rel_abs || 'Sin resumen disponible',
-      author_name: (doc.rel_authors && doc.rel_authors.length > 0) 
-        ? (Array.isArray(doc.rel_authors[0]) ? doc.rel_authors[0].join(', ') : doc.rel_authors[0])
-        : 'Autor desconocido',
-      author_inst: '',
-      category: doc.category || 'general',
-      type: doc.type || 'research',
-      rel_date: doc.rel_date || new Date().toISOString(),
-      rel_doi: doc.rel_doi || '',
-      rel_link: doc.rel_link || '',
-      rel_site: doc.rel_site || '',
-      rel_num_authors: doc.rel_num_authors || 0,
-      entities: doc.entities || [],
-      jobId: doc.jobId || '',
-      score: doc.score || 0,
-      highlights: doc.highlights || []
-    }));
-
-    res.json({
+    res.status(200).json({
       exito: true,
-      datos: resultadosFormateados,
-      total,
-      pagina: parseInt(pagina),
-      limite: limitValue,
-      totalPaginas: Math.ceil(total / limitValue),
-      tiempoRespuesta: Date.now(),
-      metodo: 'atlas_search',
-      indice: 'doc_index'
+      datos: datos,
+      total: metadata.total,
+      pagina: metadata.pagina,
+      limite: metadata.limite,
+      totalPaginas: metadata.totalPaginas,
+      facetas: facetas,
+      metodo: 'universal_atlas_search',
+      indice: 'doc_index',
+      query: q || 'todas',
+      tiempoRespuesta: Date.now()
     });
 
   } catch (error) {
-    console.error('❌ Error en Atlas Search:', error);
-    res.status(500).json({
-      exito: false,
-      error: 'Error interno del servidor',
+    console.error('❌ Error en búsqueda universal:', error);
+    res.status(500).json({ 
+      exito: false, 
+      error: 'Error al realizar la búsqueda',
       detalles: error.message
     });
   }
@@ -715,16 +926,18 @@ app.get('/api/documento/:id', authMiddleware, async (req, res) => {
       });
     }
 
-    const db = await connectToMongoDB();
-    const collection = db.collection('documents');
+    const mongoDb = await connectToMongoDB();
+    const collection = mongoDb.collection('documents');
     
-    // Buscar documento por _id (ObjectId)
     let documento;
-    try {
+    
+    // Intentar buscar por ObjectId válido
+    if (ObjectId.isValid(id)) {
       documento = await collection.findOne({ _id: new ObjectId(id) });
-    } catch (objectIdError) {
-      // Si no es un ObjectId válido, buscar por otros campos
-      console.log('🔍 ID no es ObjectId válido, buscando por otros campos...');
+    }
+    
+    // Si no se encuentra, buscar por otros campos
+    if (!documento) {
       documento = await collection.findOne({
         $or: [
           { jobId: id },
@@ -742,6 +955,12 @@ app.get('/api/documento/:id', authMiddleware, async (req, res) => {
     }
     
     console.log('✅ Documento encontrado:', documento.jobId || documento._id);
+    
+    // Incrementar vistas
+    await collection.updateOne(
+      { _id: documento._id },
+      { $inc: { vistas: 1 } }
+    );
     
     // Formatear el documento para el frontend
     const documentoFormateado = {
@@ -765,7 +984,8 @@ app.get('/api/documento/:id', authMiddleware, async (req, res) => {
       type: documento.type || '',
       license: documento.license || '',
       version: documento.version || '',
-      score: 1.0
+      score: 1.0,
+      vistas: documento.vistas || 0
     };
     
     res.json({
@@ -784,13 +1004,13 @@ app.get('/api/documento/:id', authMiddleware, async (req, res) => {
 });
 
 // ===============================
-// RUTAS DE ESTADÍSTICAS
+// RUTAS DE ESTADÍSTICAS Y FACETAS  
 // ===============================
 
 app.get('/api/estadisticas/generales', authMiddleware, async (req, res) => {
   try {
-    const db = await connectToMongoDB();
-    const collection = db.collection('documents');
+    const mongoDb = await connectToMongoDB();
+    const collection = mongoDb.collection('documents');
     
     const stats = {
       totalDocumentos: await collection.countDocuments(),
@@ -813,54 +1033,10 @@ app.get('/api/estadisticas/generales', authMiddleware, async (req, res) => {
   }
 });
 
-// ===============================
-// RUTAS ADICIONALES DE BÚSQUEDA
-// ===============================
-
-// Búsqueda por ID específico
-app.get('/api/busqueda/:id', authMiddleware, async (req, res) => {
-  try {
-    const { id } = req.params;
-    
-    const db = await connectToMongoDB();
-    const collection = db.collection('documents');
-    
-    let documento;
-    try {
-      documento = await collection.findOne({ _id: new ObjectId(id) });
-    } catch (objectIdError) {
-      documento = await collection.findOne({ jobId: id });
-    }
-    
-    if (!documento) {
-      return res.status(404).json({
-        exito: false,
-        error: 'Documento no encontrado'
-      });
-    }
-    
-    res.json({
-      exito: true,
-      datos: documento
-    });
-    
-  } catch (error) {
-    console.error('Error en búsqueda por ID:', error);
-    res.status(500).json({
-      exito: false,
-      error: 'Error interno del servidor'
-    });
-  }
-});
-
-// ===============================
-// RUTAS DE CATEGORÍAS Y FILTROS
-// ===============================
-
 app.get('/api/categorias', authMiddleware, async (req, res) => {
   try {
-    const db = await connectToMongoDB();
-    const collection = db.collection('documents');
+    const mongoDb = await connectToMongoDB();
+    const collection = mongoDb.collection('documents');
     
     const categorias = await collection.aggregate([
       {
@@ -871,6 +1047,9 @@ app.get('/api/categorias', authMiddleware, async (req, res) => {
       },
       {
         $sort: { count: -1 }
+      },
+      {
+        $limit: 50
       }
     ]).toArray();
     
@@ -893,8 +1072,8 @@ app.get('/api/categorias', authMiddleware, async (req, res) => {
 
 app.get('/api/tipos', authMiddleware, async (req, res) => {
   try {
-    const db = await connectToMongoDB();
-    const collection = db.collection('documents');
+    const mongoDb = await connectToMongoDB();
+    const collection = mongoDb.collection('documents');
     
     const tipos = await collection.aggregate([
       {
@@ -926,26 +1105,249 @@ app.get('/api/tipos', authMiddleware, async (req, res) => {
 });
 
 // ===============================
-// RUTAS DE SALUD Y MONITOREO
+// RUTAS DE GESTIÓN DE USUARIOS CON FIRESTORE
 // ===============================
 
-app.get('/api/health', (req, res) => {
-  res.json({
-    exito: true,
-    status: 'OK',
-    timestamp: new Date().toISOString(),
-    version: '1.0.0',
-    environment: 'production'
-  });
+// Configuración de usuario
+app.post('/api/usuario/config', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const config = req.body;
+    
+    await db.collection('usuarios').doc(userId).update({
+      configuracion: config,
+      ultimaActualizacion: new Date().toISOString()
+    });
+    
+    res.json({
+      exito: true,
+      mensaje: 'Configuración guardada exitosamente'
+    });
+    
+  } catch (error) {
+    console.error('Error guardando configuración:', error);
+    res.status(500).json({
+      exito: false,
+      error: 'Error al guardar configuración'
+    });
+  }
 });
 
-app.get('/api/version', (req, res) => {
-  res.json({
-    exito: true,
-    version: '1.0.0',
-    api: 'BioRxiv API',
-    timestamp: new Date().toISOString()
-  });
+app.get('/api/usuario/config', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    
+    const usuarioDoc = await db.collection('usuarios').doc(userId).get();
+    
+    if (!usuarioDoc.exists) {
+      return res.status(404).json({
+        exito: false,
+        error: 'Usuario no encontrado'
+      });
+    }
+    
+    const usuario = usuarioDoc.data();
+    const config = usuario.configuracion || {
+      theme: 'light',
+      resultsPerPage: 10,
+      notifications: true
+    };
+    
+    res.json({
+      exito: true,
+      config: config
+    });
+    
+  } catch (error) {
+    console.error('Error obteniendo configuración:', error);
+    res.status(500).json({
+      exito: false,
+      error: 'Error al obtener configuración'
+    });
+  }
+});
+
+// Historial de búsquedas
+app.post('/api/usuario/search-history', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { query, resultsCount, filters } = req.body;
+    
+    const searchData = {
+      query,
+      resultsCount,
+      filters: filters || {},
+      timestamp: new Date().toISOString()
+    };
+    
+    await db.collection('usuarios').doc(userId).collection('searchHistory').add(searchData);
+    
+    res.json({
+      exito: true,
+      mensaje: 'Búsqueda guardada en historial'
+    });
+    
+  } catch (error) {
+    console.error('Error guardando búsqueda:', error);
+    res.status(500).json({
+      exito: false,
+      error: 'Error al guardar búsqueda'
+    });
+  }
+});
+
+app.get('/api/usuario/search-history', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const limit = parseInt(req.query.limit) || 10;
+    
+    const searchHistory = await db.collection('usuarios')
+      .doc(userId)
+      .collection('searchHistory')
+      .orderBy('timestamp', 'desc')
+      .limit(limit)
+      .get();
+    
+    const searches = searchHistory.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    }));
+    
+    res.json({
+      exito: true,
+      searches: searches
+    });
+    
+  } catch (error) {
+    console.error('Error obteniendo historial:', error);
+    res.status(500).json({
+      exito: false,
+      error: 'Error al obtener historial'
+    });
+  }
+});
+
+// Artículos favoritos
+app.post('/api/usuario/favorites', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { title, abstract, authors, doi, url, category } = req.body;
+    
+    const articleData = {
+      title,
+      abstract,
+      authors,
+      doi,
+      url,
+      category,
+      timestamp: new Date().toISOString()
+    };
+    
+    await db.collection('usuarios').doc(userId).collection('favorites').add(articleData);
+    
+    res.json({
+      exito: true,
+      mensaje: 'Artículo agregado a favoritos'
+    });
+    
+  } catch (error) {
+    console.error('Error guardando favorito:', error);
+    res.status(500).json({
+      exito: false,
+      error: 'Error al agregar favorito'
+    });
+  }
+});
+
+app.get('/api/usuario/favorites', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    
+    const favorites = await db.collection('usuarios')
+      .doc(userId)
+      .collection('favorites')
+      .orderBy('timestamp', 'desc')
+      .get();
+    
+    const favoritesData = favorites.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    }));
+    
+    res.json({
+      exito: true,
+      favorites: favoritesData
+    });
+    
+  } catch (error) {
+    console.error('Error obteniendo favoritos:', error);
+    res.status(500).json({
+      exito: false,
+      error: 'Error al obtener favoritos'
+    });
+  }
+});
+
+app.delete('/api/usuario/favorites/:favoriteId', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { favoriteId } = req.params;
+    
+    await db.collection('usuarios')
+      .doc(userId)
+      .collection('favorites')
+      .doc(favoriteId)
+      .delete();
+    
+    res.json({
+      exito: true,
+      mensaje: 'Artículo eliminado de favoritos'
+    });
+    
+  } catch (error) {
+    console.error('Error eliminando favorito:', error);
+    res.status(500).json({
+      exito: false,
+      error: 'Error al eliminar favorito'
+    });
+  }
+});
+
+// Estadísticas de usuario
+app.get('/api/usuario/stats', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    
+    // Obtener estadísticas básicas
+    const [searchHistory, favorites] = await Promise.all([
+      db.collection('usuarios').doc(userId).collection('searchHistory').get(),
+      db.collection('usuarios').doc(userId).collection('favorites').get()
+    ]);
+    
+    const stats = {
+      totalSearches: searchHistory.size,
+      totalFavorites: favorites.size,
+      lastActivity: null
+    };
+    
+    // Última actividad
+    if (searchHistory.size > 0) {
+      const recentSearch = searchHistory.docs[0].data();
+      stats.lastActivity = recentSearch.timestamp;
+    }
+    
+    res.json({
+      exito: true,
+      stats
+    });
+    
+  } catch (error) {
+    console.error('Error obteniendo estadísticas:', error);
+    res.status(500).json({
+      exito: false,
+      error: 'Error al obtener estadísticas'
+    });
+  }
 });
 
 // ===============================
@@ -965,9 +1367,26 @@ app.use('*', (req, res) => {
   res.status(404).json({
     exito: false,
     error: 'Ruta no encontrada',
-    ruta: req.originalUrl
+    ruta: req.originalUrl,
+    mensaje: 'La ruta solicitada no existe en esta API'
   });
 });
+
+// ===============================
+// INICIALIZACIÓN DEL SERVIDOR
+// ===============================
+
+const PORT = process.env.PORT || 3000;
+
+// Solo iniciar servidor si no estamos en Vercel
+if (process.env.NODE_ENV !== 'production') {
+  app.listen(PORT, () => {
+    console.log(`🚀 Servidor iniciado en puerto ${PORT}`);
+    console.log(`📡 Health check: http://localhost:${PORT}/api/health`);
+    console.log(`🔍 Búsqueda: http://localhost:${PORT}/api/busqueda/articulos`);
+    console.log(`🔐 Login: http://localhost:${PORT}/api/auth/login`);
+  });
+}
 
 // Para Vercel, exportar la app directamente
 module.exports = app;
