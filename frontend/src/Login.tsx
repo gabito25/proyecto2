@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from './AuthContext';
-import { buildApiUrl, API_ENDPOINTS } from './services/api';
+import { login as apiLogin } from './services/api'; // ✅ Importa el método login
 
 const Login: React.FC = () => {
   const [email, setEmail] = useState('');
@@ -18,22 +18,14 @@ const Login: React.FC = () => {
     setError('');
 
     try {
-      // ✅ USAR URL DINÁMICA PARA VERCEL
-      const response = await fetch(buildApiUrl(API_ENDPOINTS.LOGIN), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ email, password }),
-      });
+      // Usa el método login del servicio API
+      const data = await apiLogin(email, password);
 
-      const data = await response.json();
-
-      if (response.ok && data.exito) {
+      if (data.exito) {
         login(data.usuario, data.token);
         navigate('/pagina_principal');
       } else {
-        setError(data.error || 'Error en el inicio de sesión');
+        setError(data.mensaje || 'Error en el inicio de sesión');
       }
     } catch (error) {
       setError('Error de conexión. Verifica que el servidor esté ejecutándose.');
