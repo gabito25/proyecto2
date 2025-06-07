@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "BioRxiv Fullstack App",
   "scripts": {
-    "build": "npm install && cd frontend && npm install && npm run build",
+    "build": "cd frontend && npm install && npm run build",
     "dev": "node api/index.js",
     "start": "node api/index.js"
   },
@@ -20,8 +20,5 @@
   },
   "engines": {
     "node": "18.x"
-  },
-  "devDependencies": {
-    "@types/react": "^19.1.6"
   }
 }
