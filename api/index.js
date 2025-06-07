@@ -6,7 +6,7 @@ const bcrypt = require('bcryptjs');
 const validator = require('validator');
 const { MongoClient, Db, ObjectId } = require('mongodb');
 const admin = require('firebase-admin');
-
+module.exports = require('../index.js'); 
 // Crear aplicación Express
 const app = express();
 
