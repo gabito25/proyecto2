@@ -108,19 +108,18 @@ const Pagina_principal: React.FC = () => {
     }
   };
 
-  // Función para extraer facetas de los resultados
   const extraerFacetas = (articulos: Article[]) => {
     // Extraer categorías únicas
     const categoriasUnicas = [...new Set(
       articulos
-        .map(art => art.category)
+        .map(art => String(art.category || ''))
         .filter(cat => cat && cat.trim().length > 0)
     )].slice(0, 10);
 
     // Extraer autores frecuentes
     const autoresUnicos = [...new Set(
       articulos
-        .map(art => art.author_name)
+        .map(art => String(art.author_name || ''))
         .filter(autor => autor && autor.trim().length > 0)
     )].slice(0, 8);
 
@@ -191,7 +190,10 @@ const Pagina_principal: React.FC = () => {
   }, [paginaActual, categoriaSeleccionada]);
 
   // Calcular search terms una vez a nivel de componente
-  const searchTerms = useSearchTerms(terminoBusqueda, autorBusqueda);
+const searchTerms = useSearchTerms(
+  String(terminoBusqueda || ''),
+  String(autorBusqueda || '')
+);
 
   // Estilos
   const containerStyle: React.CSSProperties = {
@@ -663,14 +665,12 @@ const Pagina_principal: React.FC = () => {
                     📂 <HighlightText 
                       text={articulo.category || 'Sin categoría'}
                       searchTerms={searchTerms}
-                    /> | 
-                    📅 {articulo.rel_date ? new Date(articulo.rel_date).toLocaleDateString('es-ES') : 'Sin fecha'} | 
-                    ⭐ Score: {articulo.score?.toFixed(2) || '0.00'}
+                    /> | 📅 {articulo.rel_date ? new Date(articulo.rel_date).toLocaleDateString('es-ES') : 'Sin fecha'} | ⭐ Score: {articulo.score?.toFixed(2) || '0.00'}
                     {articulo.type && (
                       <> | 📄 {articulo.type}</>
                     )}
                   </div>
-                  
+
                   {/* Entidades si existen */}
                   {articulo.entities && articulo.entities.length > 0 && (
                     <div style={{ marginTop: '0.5rem' }}>

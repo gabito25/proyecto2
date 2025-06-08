@@ -17,24 +17,47 @@ export const HighlightText: React.FC<HighlightProps> = ({
   searchTerms, 
   highlightStyle 
 }) => {
-  if (!text || searchTerms.length === 0) {
+  // ✅ VERIFICACIONES ADICIONALES AGREGADAS
+  if (!text || typeof text !== 'string') {
+    return <>{text || ''}</>;
+  }
+
+  if (!searchTerms || !Array.isArray(searchTerms) || searchTerms.length === 0) {
     return <>{text}</>;
   }
 
-  // Filtrar términos vacíos y crear patrón regex
+  // ✅ FILTRO MÁS ROBUSTO
   const validTerms = searchTerms
-    .filter(term => term && term.trim().length > 0)
-    .map(term => escapeRegExp(term.trim()));
+    .filter(term => {
+      // Verificar que term existe, es string, y no está vacío
+      return term && 
+             typeof term === 'string' && 
+             term.trim && 
+             term.trim().length > 0;
+    })
+    .map(term => {
+      try {
+        return escapeRegExp(term.trim());
+      } catch (error) {
+        console.warn('Error escapando término:', term, error);
+        return '';
+      }
+    })
+    .filter(term => term.length > 0); // Filtrar términos vacíos después del escape
 
   if (validTerms.length === 0) {
     return <>{text}</>;
   }
 
-  // Crear regex para buscar todos los términos (case insensitive)
-  const regex = new RegExp(`(${validTerms.join('|')})`, 'gi');
-
-  // Dividir el texto en partes
-  const parts = text.split(regex);
+  // ✅ TRY-CATCH PARA REGEX
+  let parts;
+  try {
+    const regex = new RegExp(`(${validTerms.join('|')})`, 'gi');
+    parts = text.split(regex);
+  } catch (regexError) {
+    console.warn('Error creando regex:', regexError);
+    return <>{text}</>;
+  }
 
   // Estilo por defecto para highlight
   const defaultHighlightStyle: React.CSSProperties = {
@@ -49,17 +72,29 @@ export const HighlightText: React.FC<HighlightProps> = ({
   return (
     <>
       {parts.map((part, index) => {
+        // ✅ VERIFICACIÓN ADICIONAL PARA PART
+        if (part === null || part === undefined) {
+          return null;
+        }
+
+        // Convertir a string si no lo es
+        const partStr = String(part);
+
         // Verificar si esta parte coincide con algún término de búsqueda
-        const isMatch = validTerms.some(term => 
-          part.toLowerCase() === term.toLowerCase()
-        );
+        const isMatch = validTerms.some(term => {
+          try {
+            return partStr.toLowerCase() === term.toLowerCase();
+          } catch (error) {
+            return false;
+          }
+        });
 
         return isMatch ? (
           <span key={index} style={defaultHighlightStyle}>
-            {part}
+            {partStr}
           </span>
         ) : (
-          part
+          partStr
         );
       })}
     </>
@@ -71,23 +106,46 @@ export const useSearchTerms = (searchQuery: string, authorQuery: string) => {
   const searchTerms = React.useMemo(() => {
     const terms: string[] = [];
     
-    // Agregar términos de búsqueda principal
-    if (searchQuery && searchQuery.trim()) {
-      // Dividir por espacios y filtrar términos cortos
-      const queryTerms = searchQuery
-        .trim()
-        .split(/\s+/)
-        .filter(term => term.length >= 2); // Solo términos de 2+ caracteres
-      terms.push(...queryTerms);
-    }
-    
-    // Agregar términos de autor
-    if (authorQuery && authorQuery.trim()) {
-      const authorTerms = authorQuery
-        .trim()
-        .split(/\s+/)
-        .filter(term => term.length >= 2);
-      terms.push(...authorTerms);
+    // ✅ VERIFICACIONES MÁS ROBUSTAS
+    try {
+      // Agregar términos de búsqueda principal
+      if (searchQuery && 
+          typeof searchQuery === 'string' && 
+          searchQuery.trim && 
+          searchQuery.trim()) {
+        
+        const queryTerms = searchQuery
+          .trim()
+          .split(/\s+/)
+          .filter(term => {
+            return term && 
+                   typeof term === 'string' && 
+                   term.trim && 
+                   term.trim().length >= 2;
+          });
+        terms.push(...queryTerms);
+      }
+      
+      // Agregar términos de autor
+      if (authorQuery && 
+          typeof authorQuery === 'string' && 
+          authorQuery.trim && 
+          authorQuery.trim()) {
+        
+        const authorTerms = authorQuery
+          .trim()
+          .split(/\s+/)
+          .filter(term => {
+            return term && 
+                   typeof term === 'string' && 
+                   term.trim && 
+                   term.trim().length >= 2;
+          });
+        terms.push(...authorTerms);
+      }
+    } catch (error) {
+      console.warn('Error procesando términos de búsqueda:', error);
+      return [];
     }
     
     return terms;
@@ -127,4 +185,3 @@ export const highlightStyles = {
     borderRadius: '2px'
   }
 };
-
