@@ -808,7 +808,7 @@ app.post('/auth/login', async (req, res) => {
 // RUTAS DE BÚSQUEDA
 // ===============================
 
-aapp.get('/busqueda/articulos', authMiddleware, async (req, res) => {
+app.get('/busqueda/articulos', async (req, res) => {  // ← QUITAR authMiddleware aquí
   try {
     const { 
       q = '', 
@@ -816,24 +816,45 @@ aapp.get('/busqueda/articulos', authMiddleware, async (req, res) => {
       limite = 20,
       categoria,
       tipo,
-      autor
+      autor,
+      fecha,
+      entidades
     } = req.query;
 
     const paginaNum = parseInt(pagina);
     const limiteNum = Math.min(parseInt(limite), 100);
     const skip = (paginaNum - 1) * limiteNum;
 
-    console.log('🔍 Búsqueda Atlas Search Corregida:', { q, autor, categoria, pagina: paginaNum });
+    console.log('🔍 Búsqueda Universal Atlas Search:', { q, autor, categoria, pagina: paginaNum });
 
-    const mongoDb = await connectToMongoDB();
+    // CAMBIO 2: Verificar MongoDB connection con try-catch
+    let mongoDb;
+    try {
+      mongoDb = await connectToMongoDB();
+    } catch (mongoError) {
+      console.error('❌ Error conectando MongoDB:', mongoError);
+      return res.status(500).json({ 
+        exito: false, 
+        error: 'Error de conexión a la base de datos',
+        detalles: mongoError.message
+      });
+    }
+
     const collection = mongoDb.collection('documents');
 
-    let pipeline = [];
+    const pipeline = [];
 
     if (q && q.toString().trim()) {
-      const busquedaLimpia = q.toString().trim();
+      // CAMBIO 3: Verificar que limpiarEntrada existe
+      let busquedaLimpia;
+      try {
+        busquedaLimpia = typeof limpiarEntrada === 'function' 
+          ? limpiarEntrada(q.toString()) 
+          : q.toString().trim();
+      } catch (cleanError) {
+        busquedaLimpia = q.toString().trim();
+      }
       
-      // Pipeline de búsqueda con allowAnalyzedField: true
       pipeline.push({
         $search: {
           index: "doc_index",
@@ -872,30 +893,32 @@ aapp.get('/busqueda/articulos', authMiddleware, async (req, res) => {
                 text: {
                   query: busquedaLimpia,
                   path: "rel_authors",
+                  fuzzy: { maxEdits: 1 },
                   score: { boost: { value: 2.0 } }
                 }
               }
             ],
             minimumShouldMatch: 1
           },
-          // AGREGAR allowAnalyzedField para evitar el error
+          // CAMBIO 4: Agregar allowAnalyzedField
           allowAnalyzedField: true
         }
       });
 
       pipeline.push({
         $addFields: {
-          score: { $meta: "searchScore" }
+          score: { $meta: "searchScore" },
+          highlights: { $meta: "searchHighlights" }
         }
       });
     } else {
-      // Búsqueda sin texto - obtener todos los documentos
       pipeline.push({
         $search: {
           index: "doc_index",
           wildcard: {
             query: "*",
             path: "rel_title",
+            // CAMBIO 5: Agregar allowAnalyzedField aquí también
             allowAnalyzedField: true
           }
         }
@@ -908,7 +931,7 @@ aapp.get('/busqueda/articulos', authMiddleware, async (req, res) => {
       });
     }
 
-    // Filtros adicionales
+    // Filtros
     const filtros = {};
     
     if (categoria) {
@@ -920,12 +943,18 @@ aapp.get('/busqueda/articulos', authMiddleware, async (req, res) => {
     if (autor) {
       filtros.rel_authors = { $regex: autor, $options: 'i' };
     }
+    if (fecha) {
+      filtros.$or = [
+        { rel_date: { $regex: fecha } },
+        { rel_date: { $regex: `/${fecha}` } },
+        { rel_date: { $regex: `${fecha}/` } }
+      ];
+    }
 
     if (Object.keys(filtros).length > 0) {
       pipeline.push({ $match: filtros });
     }
 
-    // Paginación y proyección
     pipeline.push({
       $facet: {
         metadata: [
@@ -947,13 +976,18 @@ aapp.get('/busqueda/articulos', authMiddleware, async (req, res) => {
             rel_date: 1,
             rel_doi: 1,
             rel_link: 1,
+            rel_site: 1,
+            rel_num_authors: 1,
             rel_authors: { $slice: ['$rel_authors', 10] },
+            version: 1,
+            license: 1,
             category: 1,
             type: 1,
             entities: 1,
             jobId: 1,
             content: 1,
             score: 1,
+            highlights: 1,
             author_name: { 
               $cond: {
                 if: { $gt: [{ $size: { $ifNull: ['$rel_authors', []] } }, 0] },
@@ -973,7 +1007,7 @@ aapp.get('/busqueda/articulos', authMiddleware, async (req, res) => {
       }
     });
 
-    console.log('🔍 Ejecutando pipeline corregido...');
+    console.log('🔍 Pipeline Universal ejecutándose...');
 
     const resultados = await collection.aggregate(pipeline).toArray();
     
@@ -998,7 +1032,7 @@ aapp.get('/busqueda/articulos', authMiddleware, async (req, res) => {
     
     const datos = resultados[0].datos || [];
 
-    console.log(`✅ Búsqueda exitosa: ${datos.length}/${metadata.total} documentos`);
+    console.log(`✅ Búsqueda Universal Exitosa: ${datos.length}/${metadata.total} documentos`);
 
     res.status(200).json({
       exito: true,
@@ -1007,17 +1041,18 @@ aapp.get('/busqueda/articulos', authMiddleware, async (req, res) => {
       pagina: metadata.pagina,
       limite: metadata.limite,
       totalPaginas: metadata.totalPaginas,
-      metodo: 'atlas_search_fixed',
+      metodo: 'universal_atlas_search',
       indice: 'doc_index',
-      query: q || 'todas'
+      query: q || 'todas',
+      tiempoRespuesta: Date.now()
     });
 
   } catch (error) {
-    console.error('❌ Error en búsqueda:', error);
+    console.error('❌ Error en búsqueda universal:', error);
     
-    // Si el error persiste, usar búsqueda básica sin Atlas Search
+    // CAMBIO 6: Fallback a búsqueda básica si Atlas Search falla
     try {
-      console.log('🔄 Intentando búsqueda básica...');
+      console.log('🔄 Intentando búsqueda básica como fallback...');
       
       const mongoDb = await connectToMongoDB();
       const collection = mongoDb.collection('documents');
@@ -1041,7 +1076,11 @@ aapp.get('/busqueda/articulos', authMiddleware, async (req, res) => {
       
       res.status(200).json({
         exito: true,
-        datos: documentos,
+        datos: documentos.map(doc => ({
+          ...doc,
+          author_name: doc.rel_authors?.[0] || 'Autor desconocido',
+          resumen: doc.rel_abs?.substring(0, 300) || 'Sin resumen'  
+        })),
         total: total,
         pagina: parseInt(pagina) || 1,
         limite: parseInt(limite) || 20,
