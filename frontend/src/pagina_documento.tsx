@@ -1,13 +1,59 @@
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from './AuthContext';
-import { HighlightText, highlightStyles } from './utils/highlight';
 import { useEffect, useState } from 'react';
 import { getDocumento, Article } from './services/api';
+
+// ✅ COMPONENTE HIGHLIGHT SIMPLE Y SEGURO (igual al de Pagina_principal)
+const SimpleHighlight: React.FC<{
+  text: any;
+  search: string;
+}> = ({ text, search }) => {
+  // Convertir todo a string de forma segura
+  const safeText = String(text || '');
+  const safeSearch = String(search || '').trim();
+  
+  // Si no hay término de búsqueda, mostrar texto normal
+  if (!safeSearch || safeSearch.length < 2) {
+    return <>{safeText}</>;
+  }
+  
+  try {
+    // Buscar coincidencias (case insensitive)
+    const regex = new RegExp(`(${safeSearch})`, 'gi');
+    const parts = safeText.split(regex);
+    
+    return (
+      <>
+        {parts.map((part, i) => {
+          const isMatch = part.toLowerCase() === safeSearch.toLowerCase();
+          return isMatch ? (
+            <span 
+              key={i} 
+              style={{
+                backgroundColor: '#ffeb3b',
+                fontWeight: 'bold',
+                padding: '1px 2px',
+                borderRadius: '2px'
+              }}
+            >
+              {part}
+            </span>
+          ) : (
+            part
+          );
+        })}
+      </>
+    );
+  } catch {
+    // Si hay error, mostrar texto sin highlight
+    return <>{safeText}</>;
+  }
+};
 
 const Pagina_documento: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { usuario, token } = useAuth();
+  const { usuario, token, logout } = useAuth();
   
   const [documento, setDocumento] = useState<Article | null>(null);
   const [cargando, setCargando] = useState<boolean>(true);
@@ -60,7 +106,6 @@ const Pagina_documento: React.FC = () => {
   };
 
   const cerrarSesion = async () => {
-    const { logout } = useAuth();
     await logout();
   };
 
@@ -317,7 +362,7 @@ const Pagina_documento: React.FC = () => {
           <div style={userInfoStyle}>
             {usuario && (
               <span style={{color: '#333333'}}>
-                Bienvenido, {usuario.nombre}
+                Bienvenido, {usuario.email}
               </span>
             )}
             <button style={backButtonStyle} onClick={volver}>
@@ -344,7 +389,7 @@ const Pagina_documento: React.FC = () => {
           <div style={userInfoStyle}>
             {usuario && (
               <span style={{color: '#333333'}}>
-                Bienvenido, {usuario.nombre}
+                Bienvenido, {usuario.email}
               </span>
             )}
             <button style={backButtonStyle} onClick={volver}>
@@ -390,7 +435,7 @@ const Pagina_documento: React.FC = () => {
         <div style={userInfoStyle}>
           {usuario && (
             <span style={{color: '#333333'}}>
-              Bienvenido, {usuario.nombre}
+              Bienvenido, {usuario.email}
             </span>
           )}
           <button style={backButtonStyle} onClick={volver}>
@@ -407,7 +452,7 @@ const Pagina_documento: React.FC = () => {
         {/* Encabezado del documento */}
         <div style={documentHeaderStyle}>
           <h1 style={documentTitleStyle}>
-            {documento.rel_title || 'Sin título'}
+            {String(documento.rel_title || 'Sin título')}
           </h1>
           
           {/* Grid de metadatos */}
@@ -416,21 +461,21 @@ const Pagina_documento: React.FC = () => {
               <span style={metaLabelStyle}>
                 <span>👤</span> Autor Principal
               </span>
-              <span style={metaValueStyle}>{documento.author_name || 'Autor desconocido'}</span>
+              <span style={metaValueStyle}>{String(documento.author_name || 'Autor desconocido')}</span>
             </div>
             
             <div style={metaItemStyle}>
               <span style={metaLabelStyle}>
                 <span>📂</span> Categoría
               </span>
-              <span style={metaValueStyle}>{documento.category || 'General'}</span>
+              <span style={metaValueStyle}>{String(documento.category || 'General')}</span>
             </div>
             
             <div style={metaItemStyle}>
               <span style={metaLabelStyle}>
                 <span>📄</span> Tipo
               </span>
-              <span style={metaValueStyle}>{documento.type || 'Artículo'}</span>
+              <span style={metaValueStyle}>{String(documento.type || 'Artículo')}</span>
             </div>
             
             <div style={metaItemStyle}>
@@ -459,7 +504,7 @@ const Pagina_documento: React.FC = () => {
                   onClick={() => abrirDOI(documento.rel_doi)}
                   title="Hacer clic para abrir DOI"
                 >
-                  {documento.rel_doi}
+                  {String(documento.rel_doi)}
                 </span>
               </div>
             )}
@@ -469,13 +514,13 @@ const Pagina_documento: React.FC = () => {
                 <span style={metaLabelStyle}>
                   <span>🆔</span> Job ID
                 </span>
-                <span style={metaValueStyle}>{documento.jobId}</span>
+                <span style={metaValueStyle}>{String(documento.jobId)}</span>
               </div>
             )}
           </div>
 
           {/* Todos los autores */}
-          {documento.rel_authors && documento.rel_authors.length > 0 && (
+          {documento.rel_authors && Array.isArray(documento.rel_authors) && documento.rel_authors.length > 0 && (
             <div style={sectionStyle}>
               <span style={metaLabelStyle}>
                 <span>👥</span> Autores ({documento.rel_authors.length})
@@ -483,7 +528,7 @@ const Pagina_documento: React.FC = () => {
               <div style={authorsContainerStyle}>
                 {documento.rel_authors.map((author, index) => (
                   <span key={index} style={authorTagStyle}>
-                    {author}
+                    {String(author)}
                   </span>
                 ))}
               </div>
@@ -491,7 +536,7 @@ const Pagina_documento: React.FC = () => {
           )}
 
           {/* Entidades */}
-          {documento.entities && documento.entities.length > 0 && (
+          {documento.entities && Array.isArray(documento.entities) && documento.entities.length > 0 && (
             <div style={sectionStyle}>
               <span style={metaLabelStyle}>
                 <span>🏷️</span> Entidades ({documento.entities.length})
@@ -499,7 +544,7 @@ const Pagina_documento: React.FC = () => {
               <div style={entitiesContainerStyle}>
                 {documento.entities.map((entity, index) => (
                   <span key={index} style={entityTagStyle}>
-                    {entity}
+                    {String(entity)}
                   </span>
                 ))}
               </div>
@@ -525,10 +570,9 @@ const Pagina_documento: React.FC = () => {
               <span>📋</span> Resumen
             </h2>
             <div style={contentTextStyle}>
-              <HighlightText 
+              <SimpleHighlight 
                 text={documento.rel_abs}
-                searchTerms={[]} // No hay términos de búsqueda definidos aquí
-                highlightStyle={highlightStyles.abstract}
+                search="" // Sin términos de búsqueda por ahora
               />
             </div>
           </div>
@@ -541,12 +585,11 @@ const Pagina_documento: React.FC = () => {
               <span>📄</span> Contenido Completo
             </h2>
             <div style={contentTextStyle}>
-              {documento.content.split('\n').map((paragraph, index) => (
+              {String(documento.content).split('\n').map((paragraph, index) => (
                 <p key={index} style={{ marginBottom: '1rem', margin: '0 0 1rem 0' }}>
-                  <HighlightText 
+                  <SimpleHighlight 
                     text={paragraph || '\u00A0'}
-                    searchTerms={[]} // No hay términos de búsqueda definidos aquí
-                    highlightStyle={highlightStyles.content}
+                    search="" // Sin términos de búsqueda por ahora
                   />
                 </p>
               ))}
@@ -555,7 +598,7 @@ const Pagina_documento: React.FC = () => {
         )}
 
         {/* Información adicional si está disponible */}
-        {documento.highlights && documento.highlights.length > 0 && (
+        {documento.highlights && Array.isArray(documento.highlights) && documento.highlights.length > 0 && (
           <div style={sectionStyle}>
             <h2 style={sectionTitleStyle}>
               <span>✨</span> Fragmentos Destacados
@@ -563,7 +606,7 @@ const Pagina_documento: React.FC = () => {
             <div style={contentTextStyle}>
               {documento.highlights.map((highlight, index) => (
                 <div key={index} style={{ marginBottom: '1rem' }}>
-                  <strong>{highlight.path}:</strong> {highlight.texts?.join(' ') || 'N/A'}
+                  <strong>{String(highlight.path || 'N/A')}:</strong> {String(highlight.texts?.join(' ') || 'N/A')}
                 </div>
               ))}
             </div>
