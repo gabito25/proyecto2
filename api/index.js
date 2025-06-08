@@ -279,6 +279,33 @@ app.use(cors({
 }));
 
 console.log('✅ CORS configurado con middleware dual');
+// ===============================
+// MIDDLEWARE DE EXPRESS - CRÍTICO
+// ===============================
+
+// PARSEAR JSON BODIES - SIN ESTO req.body ES UNDEFINED
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+console.log('✅ Express JSON middleware configurado');
+
+// Rate limiting
+const rateLimitWindowMs = 15 * 60 * 1000;
+const maxRequestsPerWindow = 100;
+
+app.use((req, res, next) => {
+  if (rateLimitMiddleware(req, maxRequestsPerWindow, rateLimitWindowMs)) {
+    return res.status(429).json({
+      exito: false,
+      error: 'Demasiadas solicitudes. Intenta de nuevo más tarde.'
+    });
+  }
+  next();
+});
+
+console.log('✅ Rate limiting configurado');
+
+
 
 // ===============================
 // MIDDLEWARE DE AUTENTICACIÓN
