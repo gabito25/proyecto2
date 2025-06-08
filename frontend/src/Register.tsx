@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { buildApiUrl, API_ENDPOINTS } from './services/api';
+import { register } from './services/api';
 
 export default function RegisterPage() {
   const navigate = useNavigate();
@@ -45,26 +45,13 @@ export default function RegisterPage() {
     setLoading(true);
 
     try {
-      // ✅ USAR URL DINÁMICA PARA VERCEL
-      const response = await fetch(buildApiUrl(API_ENDPOINTS.REGISTER), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          nombre: formData.nombre.trim(),
-          email: formData.email,
-          password: formData.password,
-        }),
-      });
+      const data = await register(formData.email, formData.password, formData.nombre.trim());
 
-      const data = await response.json();
-
-      if (response.ok && data.exito) {
+      if (data.exito) {
         alert('Registro exitoso. Ahora puedes iniciar sesión.');
         navigate('/login');
       } else {
-        setError(data.error || 'Error al registrar usuario');
+        setError(data.mensaje || 'Error al registrar usuario');
       }
     } catch (err: any) {
       console.error('Error al registrar:', err);
