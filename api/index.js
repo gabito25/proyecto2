@@ -655,6 +655,155 @@ app.post('/auth/registro', async (req, res) => {
     });
   }
 });
+
+
+app.post('/auth/login', async (req, res) => {
+  try {
+    console.log('🔐 Inicio de login');
+    console.log('📦 Body recibido:', req.body);
+    
+    const { email, password } = req.body;
+
+    // Validaciones básicas
+    if (!email || !password) {
+      console.log('❌ Email o password faltante');
+      return res.status(400).json({
+        exito: false,
+        error: 'Email y contraseña son requeridos'
+      });
+    }
+
+    if (!email.includes('@') || email.length < 5) {
+      console.log('❌ Email inválido:', email);
+      return res.status(400).json({ 
+        exito: false, 
+        error: 'Email inválido' 
+      });
+    }
+
+    console.log('✅ Validaciones básicas pasadas');
+
+    // Verificar Firebase
+    if (!db) {
+      console.error('❌ Firebase no inicializado');
+      return res.status(500).json({
+        exito: false,
+        error: 'Error de configuración del servidor'
+      });
+    }
+
+    console.log('🔥 Firebase disponible, buscando usuario...');
+
+    // Buscar usuario en Firebase
+    let usuarioDoc;
+    try {
+      const usuariosRef = db.collection('usuarios');
+      const snapshot = await usuariosRef
+        .where('email', '==', email.toLowerCase())
+        .where('activo', '==', true)
+        .limit(1)
+        .get();
+
+      if (snapshot.empty) {
+        console.log('❌ Usuario no encontrado:', email);
+        return res.status(401).json({ 
+          exito: false, 
+          error: 'Credenciales inválidas' 
+        });
+      }
+
+      usuarioDoc = snapshot.docs[0];
+    } catch (firebaseError) {
+      console.error('❌ Error consultando Firebase:', firebaseError);
+      return res.status(500).json({
+        exito: false,
+        error: 'Error de base de datos'
+      });
+    }
+
+    const usuario = { id: usuarioDoc.id, ...usuarioDoc.data() };
+    console.log('✅ Usuario encontrado:', email);
+
+    // Verificar contraseña
+    let contraseñaValida;
+    try {
+      const bcrypt = require('bcryptjs');
+      contraseñaValida = await bcrypt.compare(password, usuario.contraseña);
+    } catch (hashError) {
+      console.error('❌ Error verificando contraseña:', hashError);
+      return res.status(500).json({
+        exito: false,
+        error: 'Error verificando credenciales'
+      });
+    }
+
+    if (!contraseñaValida) {
+      console.log('❌ Contraseña incorrecta para:', email);
+      return res.status(401).json({ 
+        exito: false, 
+        error: 'Credenciales inválidas' 
+      });
+    }
+
+    console.log('✅ Contraseña correcta');
+
+    // Actualizar último login
+    try {
+      await usuarioDoc.ref.update({
+        ultimoLogin: new Date().toISOString()
+      });
+    } catch (updateError) {
+      console.log('⚠️ No se pudo actualizar último login:', updateError);
+      // No es crítico, continuar
+    }
+
+    // Generar token
+    let token;
+    try {
+      const jwt = require('jsonwebtoken');
+      token = jwt.sign(
+        {
+          id: usuario.id,
+          email: usuario.email,
+          nombre: usuario.nombre
+        },
+        process.env.JWT_SECRET,
+        { expiresIn: '7d' }
+      );
+    } catch (tokenError) {
+      console.error('❌ Error generando token:', tokenError);
+      return res.status(500).json({
+        exito: false,
+        error: 'Error generando token'
+      });
+    }
+
+    console.log('✅ Login exitoso para:', email);
+
+    res.json({
+      exito: true,
+      usuario: {
+        id: usuario.id,
+        nombre: usuario.nombre,
+        email: usuario.email
+      },
+      token
+    });
+
+  } catch (error) {
+    console.error('💥 Error general en login:', {
+      message: error.message,
+      stack: error.stack,
+      name: error.name
+    });
+    
+    res.status(500).json({
+      exito: false,
+      error: 'Error interno del servidor',
+      detalles: error.message
+    });
+  }
+});
 // ===============================
 // RUTAS DE BÚSQUEDA
 // ===============================
