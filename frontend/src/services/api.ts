@@ -42,10 +42,10 @@ export interface AuthResponse {
 
 // Configuración de la API
 const API_BASE_URL = process.env.NODE_ENV === 'production' 
-  ? 'https://proyecto2-8dcb.onrender.com'  // Tu backend en Render
+  ? 'https://proyecto2-git-main-gabriels-projects-137ca855.vercel.app'
   : 'http://localhost:3000';
 
-// Cliente HTTP básico
+// Cliente HTTP básico  
 class ApiClient {
   private baseURL: string;
   private token: string | null = null;

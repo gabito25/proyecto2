@@ -186,6 +186,7 @@ try {
 const allowedOrigins = [
   'https://biorxiv.vercel.app',
   'https://biorxiv-git-main-gabriels-projects-137ca855.vercel.app',
+  'https://biorxiv-hsggfxfqr-gabriels-projects-137ca855.vercel.app', // ← AGREGAR ESTA LÍNEA
   'http://localhost:5173',
   'http://localhost:3000'
 ];
