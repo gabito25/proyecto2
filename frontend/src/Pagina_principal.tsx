@@ -1,8 +1,54 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from './AuthContext';
-import { HighlightText, useSearchTerms } from './utils/highlight';
 import { searchArticles, Article, SearchResponse } from './services/api';
+
+// ✅ COMPONENTE HIGHLIGHT SÚPER SIMPLE Y SEGURO
+const SimpleHighlight: React.FC<{
+  text: any;
+  search: string;
+}> = ({ text, search }) => {
+  // Convertir todo a string de forma segura
+  const safeText = String(text || '');
+  const safeSearch = String(search || '').trim();
+  
+  // Si no hay término de búsqueda, mostrar texto normal
+  if (!safeSearch || safeSearch.length < 2) {
+    return <>{safeText}</>;
+  }
+  
+  try {
+    // Buscar coincidencias (case insensitive)
+    const regex = new RegExp(`(${safeSearch})`, 'gi');
+    const parts = safeText.split(regex);
+    
+    return (
+      <>
+        {parts.map((part, i) => {
+          const isMatch = part.toLowerCase() === safeSearch.toLowerCase();
+          return isMatch ? (
+            <span 
+              key={i} 
+              style={{
+                backgroundColor: '#ffeb3b',
+                fontWeight: 'bold',
+                padding: '1px 2px',
+                borderRadius: '2px'
+              }}
+            >
+              {part}
+            </span>
+          ) : (
+            part
+          );
+        })}
+      </>
+    );
+  } catch {
+    // Si hay error, mostrar texto sin highlight
+    return <>{safeText}</>;
+  }
+};
 
 const Pagina_principal: React.FC = () => {
   const navigate = useNavigate();
@@ -109,14 +155,14 @@ const Pagina_principal: React.FC = () => {
   };
 
   const extraerFacetas = (articulos: Article[]) => {
-    // Extraer categorías únicas
+    // Extraer categorías únicas de forma segura
     const categoriasUnicas = [...new Set(
       articulos
         .map(art => String(art.category || ''))
         .filter(cat => cat && cat.trim().length > 0)
     )].slice(0, 10);
 
-    // Extraer autores frecuentes
+    // Extraer autores frecuentes de forma segura
     const autoresUnicos = [...new Set(
       articulos
         .map(art => String(art.author_name || ''))
@@ -188,12 +234,6 @@ const Pagina_principal: React.FC = () => {
       realizarBusqueda();
     }
   }, [paginaActual, categoriaSeleccionada]);
-
-  // Calcular search terms una vez a nivel de componente
-const searchTerms = useSearchTerms(
-  String(terminoBusqueda || ''),
-  String(autorBusqueda || '')
-);
 
   // Estilos
   const containerStyle: React.CSSProperties = {
@@ -635,16 +675,16 @@ const searchTerms = useSearchTerms(
                 }}
               >
                 <div style={articleTitleStyle}>
-                  <HighlightText 
+                  <SimpleHighlight 
                     text={articulo.rel_title || 'Sin título'}
-                    searchTerms={searchTerms}
+                    search={terminoBusqueda}
                   />
                 </div>
                 
                 <div style={articleAuthorStyle}>
-                  👤 <HighlightText 
+                  👤 <SimpleHighlight 
                     text={articulo.author_name || 'Autor desconocido'}
-                    searchTerms={searchTerms}
+                    search={autorBusqueda}
                   />
                   {articulo.rel_authors && articulo.rel_authors.length > 1 && (
                     <span style={{color: '#999', fontSize: '0.8rem'}}>
@@ -654,29 +694,29 @@ const searchTerms = useSearchTerms(
                 </div>
                 
                 <div style={articleAbstractStyle}>
-                  <HighlightText 
+                  <SimpleHighlight 
                     text={articulo.rel_abs || articulo.resumen || 'Sin resumen disponible'}
-                    searchTerms={searchTerms}
+                    search={terminoBusqueda}
                   />
                 </div>
                 
                 <div style={articleMetaStyle}>
                   <div style={{marginBottom: '0.25rem'}}>
-                    📂 <HighlightText 
+                    📂 <SimpleHighlight 
                       text={articulo.category || 'Sin categoría'}
-                      searchTerms={searchTerms}
+                      search={terminoBusqueda}
                     /> | 📅 {articulo.rel_date ? new Date(articulo.rel_date).toLocaleDateString('es-ES') : 'Sin fecha'} | ⭐ Score: {articulo.score?.toFixed(2) || '0.00'}
                     {articulo.type && (
-                      <> | 📄 {articulo.type}</>
+                      <> | 📄 {String(articulo.type)}</>
                     )}
                   </div>
 
                   {/* Entidades si existen */}
-                  {articulo.entities && articulo.entities.length > 0 && (
+                  {articulo.entities && Array.isArray(articulo.entities) && articulo.entities.length > 0 && (
                     <div style={{ marginTop: '0.5rem' }}>
                       🏷️ {articulo.entities.slice(0, 5).map((entity, idx) => (
                         <span key={idx} style={entitiesStyle}>
-                          {entity}
+                          {String(entity)}
                         </span>
                       ))}
                       {articulo.entities.length > 5 && (
@@ -688,7 +728,7 @@ const searchTerms = useSearchTerms(
                   )}
                   
                   {/* Highlights si existen */}
-                  {articulo.highlights && articulo.highlights.length > 0 && (
+                  {articulo.highlights && Array.isArray(articulo.highlights) && articulo.highlights.length > 0 && (
                     <div style={{ marginTop: '0.25rem', fontSize: '0.75rem', color: '#007bff' }}>
                       ✨ Texto coincidente encontrado
                     </div>
