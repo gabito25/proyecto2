@@ -50,6 +50,52 @@ const SimpleHighlight: React.FC<{
   }
 };
 
+// ✅ FUNCIÓN PARA EXTRAER NOMBRES DE AUTORES (igual que en Pagina_principal)
+const obtenerNombreAutor = (autor: any): string => {
+  try {
+    if (!autor) return 'Autor desconocido';
+    
+    // Si es string, devolverlo
+    if (typeof autor === 'string') {
+      return autor.trim();
+    }
+    
+    // Si es objeto, intentar extraer el nombre
+    if (typeof autor === 'object') {
+      // Probar diferentes propiedades comunes
+      const nombre = autor.name || 
+                    autor.author_name || 
+                    autor.firstName || 
+                    autor.lastName || 
+                    autor.given || 
+                    autor.family ||
+                    autor.full_name ||
+                    autor.displayName;
+      
+      if (nombre) {
+        return String(nombre).trim();
+      }
+      
+      // Si tiene firstName y lastName, combinarlos
+      if (autor.firstName || autor.lastName) {
+        return `${autor.firstName || ''} ${autor.lastName || ''}`.trim();
+      }
+      
+      // Si tiene given y family, combinarlos
+      if (autor.given || autor.family) {
+        return `${autor.given || ''} ${autor.family || ''}`.trim();
+      }
+      
+      return 'Autor desconocido';
+    }
+    
+    return String(autor).trim() || 'Autor desconocido';
+  } catch (error) {
+    console.warn('Error procesando autor:', error, autor);
+    return 'Autor desconocido';
+  }
+};
+
 const Pagina_documento: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -461,7 +507,7 @@ const Pagina_documento: React.FC = () => {
               <span style={metaLabelStyle}>
                 <span>👤</span> Autor Principal
               </span>
-              <span style={metaValueStyle}>{String(documento.author_name || 'Autor desconocido')}</span>
+              <span style={metaValueStyle}>{obtenerNombreAutor(documento.author_name)}</span>
             </div>
             
             <div style={metaItemStyle}>
@@ -528,7 +574,7 @@ const Pagina_documento: React.FC = () => {
               <div style={authorsContainerStyle}>
                 {documento.rel_authors.map((author, index) => (
                   <span key={index} style={authorTagStyle}>
-                    {String(author)}
+                    {obtenerNombreAutor(author)}
                   </span>
                 ))}
               </div>
