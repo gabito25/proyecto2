@@ -154,24 +154,92 @@ const Pagina_principal: React.FC = () => {
     }
   };
 
-  const extraerFacetas = (articulos: Article[]) => {
+ const extraerFacetas = (articulos: Article[]) => {
+  try {
     // Extraer categorías únicas de forma segura
     const categoriasUnicas = [...new Set(
       articulos
         .map(art => String(art.category || ''))
-        .filter(cat => cat && cat.trim().length > 0)
+        .filter(cat => cat && cat.length > 0)
     )].slice(0, 10);
 
-    // Extraer autores frecuentes de forma segura
+    // ✅ EXTRACCIÓN DE AUTORES MEJORADA - maneja objetos y arrays
     const autoresUnicos = [...new Set(
       articulos
-        .map(art => String(art.author_name || ''))
+        .flatMap(art => {
+          // Manejar diferentes formatos de autores
+          if (art.rel_authors && Array.isArray(art.rel_authors)) {
+            return art.rel_authors.map(autor => {
+              // Si el autor es un objeto, extraer el nombre
+              if (typeof autor === 'object' && autor !== null) {
+                return typeof autor === 'object' && autor !== null
+                  ? String(
+                      (autor as { name?: string; author_name?: string; firstName?: string; lastName?: string }).name ||
+                      (autor as { name?: string; author_name?: string; firstName?: string; lastName?: string }).author_name ||
+                      (autor as { name?: string; author_name?: string; firstName?: string; lastName?: string }).firstName ||
+                      (autor as { name?: string; author_name?: string; firstName?: string; lastName?: string }).lastName ||
+                      ''
+                    )
+                  : String(autor || '');
+              }
+              // Si es string, usarlo directamente
+              return String(autor || '');
+            });
+          }
+          
+          // Si rel_authors no es array, usar author_name
+          if (art.author_name) {
+            if (typeof art.author_name === 'object' && art.author_name !== null) {
+              const authorObj = art.author_name as { name?: string; author_name?: string };
+              return [String(authorObj.name || authorObj.author_name || '')];
+            }
+            return [String(art.author_name)];
+          }
+          
+          return [];
+        })
         .filter(autor => autor && autor.trim().length > 0)
     )].slice(0, 8);
 
+    console.log('📊 Facetas extraídas:', { categorias: categoriasUnicas, autores: autoresUnicos });
+
     setCategorias(categoriasUnicas);
     setAutoresFrequentes(autoresUnicos);
-  };
+  } catch (error) {
+    console.error('❌ Error extrayendo facetas:', error);
+    limpiarFacetas();
+  }
+};
+
+// ✅ FUNCIÓN PARA MOSTRAR AUTORES DE FORMA SEGURA - Agrega esta función también
+
+const obtenerNombreAutor = (autor: any): string => {
+  try {
+    if (!autor) return 'Autor desconocido';
+    
+    // Si es string, devolverlo
+    if (typeof autor === 'string') {
+      return autor.trim();
+    }
+    
+    // Si es objeto, intentar extraer el nombre
+    if (typeof autor === 'object') {
+      const nombre = autor.name || 
+                    autor.author_name || 
+                    autor.firstName || 
+                    autor.lastName || 
+                    autor.given || 
+                    autor.family || 
+                    JSON.stringify(autor);
+      return String(nombre).trim();
+    }
+    
+    return String(autor).trim();
+  } catch (error) {
+    console.warn('Error procesando autor:', error, autor);
+    return 'Autor desconocido';
+  }
+};
 
   const limpiarFacetas = () => {
     setCategorias([]);
@@ -674,11 +742,16 @@ const Pagina_principal: React.FC = () => {
                   e.currentTarget.style.boxShadow = 'none';
                 }}
               >
-                <div style={articleTitleStyle}>
-                  <SimpleHighlight 
-                    text={articulo.rel_title || 'Sin título'}
-                    search={terminoBusqueda}
+                <div style={articleAuthorStyle}>
+                  👤 <SimpleHighlight 
+                    text={obtenerNombreAutor(articulo.author_name) || 'Autor desconocido'}
+                    search={autorBusqueda}
                   />
+                  {articulo.rel_authors && Array.isArray(articulo.rel_authors) && articulo.rel_authors.length > 1 && (
+                    <span style={{color: '#999', fontSize: '0.8rem'}}>
+                      {' '}(+{articulo.rel_authors.length - 1} coautores)
+                    </span>
+                  )}
                 </div>
                 
                 <div style={articleAuthorStyle}>
