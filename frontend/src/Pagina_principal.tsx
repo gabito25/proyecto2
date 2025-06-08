@@ -430,7 +430,7 @@ const searchTerms = useSearchTerms(
         <div style={userInfoStyle}>
           {usuario && (
             <span style={{color: '#333333', fontWeight: '500'}}>
-              Bienvenido, {usuario.nombre}
+              Bienvenido, {usuario.email}
             </span>
           )}
           <button style={logoutButtonStyle} onClick={cerrarSesion}>
