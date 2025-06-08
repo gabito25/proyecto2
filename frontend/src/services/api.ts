@@ -55,7 +55,7 @@ export interface DocumentResponse {
 
 // Configuración de la API
 const API_BASE_URL = process.env.NODE_ENV === 'production' 
-  ? 'https://proyecto2-git-main-gabriels-projects-137ca855.vercel.app'  // Tu backend en Vercel
+  ? 'https://proyecto2-flame.vercel.app'   // Tu backend en Vercel
   : 'http://localhost:3000';
 
 // Cliente HTTP básico
