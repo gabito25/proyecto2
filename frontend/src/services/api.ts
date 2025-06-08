@@ -207,3 +207,4 @@ export const getToken = () => apiClient.getToken();
 export const getDocumento = (documentoId: string) => apiClient.getDocumento(documentoId);
 
 export default apiClient;
+console.log('🌐 API_BASE_URL:', API_BASE_URL);  

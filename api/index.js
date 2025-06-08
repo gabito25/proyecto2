@@ -747,6 +747,52 @@ app.get('/busqueda/articulos', authMiddleware, async (req, res) => {
 // RUTA PARA OBTENER DOCUMENTO POR ID
 // ===============================
 
+// Ruta de test para verificar conectividad
+app.get('/test', (req, res) => {
+  console.log('🧪 Test endpoint accessed');
+  console.log('🔍 Origin:', req.headers.origin);
+  console.log('🔍 User-Agent:', req.headers['user-agent']);
+  
+  res.json({
+    status: 'OK',
+    message: 'Backend funcionando correctamente',
+    timestamp: new Date().toISOString(),
+    origin: req.headers.origin,
+    environment: process.env.NODE_ENV || 'development',
+    baseUrl: req.protocol + '://' + req.get('host'),
+    allowedOrigins: [
+      'https://biorxiv.vercel.app',
+      'https://biorxiv-git-main-gabriels-projects-137ca855.vercel.app'
+    ]
+  });
+});
+
+// Ruta para listar todas las rutas disponibles
+app.get('/routes', (req, res) => {
+  const routes = [];
+  
+  app._router.stack.forEach(function(r){
+    if (r.route && r.route.path){
+      routes.push({
+        path: r.route.path,
+        methods: Object.keys(r.route.methods)
+      });
+    }
+  });
+  
+  res.json({
+    status: 'OK',
+    message: 'Rutas disponibles',
+    routes: routes,
+    timestamp: new Date().toISOString()
+  });
+});
+
+// ===============================
+// VERIFICAR QUE LA RUTA GET /documento/:id EXISTA
+// ===============================
+
+// Agregar esta ruta si no existe
 app.get('/documento/:id', authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
