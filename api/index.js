@@ -449,9 +449,39 @@ app.use((req, res, next) => {
 // RUTAS DE AUTENTICACIÓN
 // ===============================
 
+// Test auth simple sin dependencias
+app.post('/auth/test', (req, res) => {
+  console.log('🧪 Auth test - Body recibido:', req.body);
+  
+  try {
+    const { email, password, nombre } = req.body;
+    
+    res.json({
+      status: 'SUCCESS',
+      message: 'Auth test funcionando',
+      receivedData: { email, nombre }, // no password por seguridad
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('❌ Error en auth test:', error);
+    res.status(500).json({
+      exito: false,
+      error: 'Error en auth test',
+      detalles: error.message
+    });
+  }
+});
+
+
+
 app.post('/auth/registro', async (req, res) => {
   try {
+    console.log('📝 Inicio de registro');
+    console.log('📦 Body recibido:', req.body);
+    
+    // Rate limiting check
     if (rateLimitMiddleware(req, 10, 3600000)) {
+      console.log('⚠️ Rate limit excedido');
       return res.status(429).json({ 
         exito: false, 
         error: 'Demasiadas solicitudes. Intenta más tarde.' 
@@ -459,10 +489,11 @@ app.post('/auth/registro', async (req, res) => {
     }
 
     const { email, password, nombre } = req.body;
+    console.log('👤 Datos del usuario:', { email, nombre });
 
-    console.log('📝 Solicitud de registro:', { nombre, email });
-
+    // Validaciones
     if (!validarEmail(email)) {
+      console.log('❌ Email inválido:', email);
       return res.status(400).json({ 
         exito: false, 
         error: 'Email inválido' 
@@ -470,6 +501,7 @@ app.post('/auth/registro', async (req, res) => {
     }
 
     if (!validarContraseña(password)) {
+      console.log('❌ Contraseña inválida');
       return res.status(400).json({ 
         exito: false, 
         error: 'La contraseña debe tener al menos 6 caracteres' 
@@ -477,24 +509,45 @@ app.post('/auth/registro', async (req, res) => {
     }
 
     if (!validarNombre(nombre)) {
+      console.log('❌ Nombre inválido:', nombre);
       return res.status(400).json({ 
         exito: false, 
         error: 'El nombre debe tener al menos 2 caracteres' 
       });
     }
 
+    console.log('✅ Validaciones pasadas');
+
+    // Verificar conexión Firebase
+    if (!db) {
+      console.error('❌ Firebase no inicializado');
+      return res.status(500).json({
+        exito: false,
+        error: 'Error de configuración del servidor'
+      });
+    }
+
+    console.log('🔥 Firebase conectado');
+
+    // Verificar usuario existente
     const usuariosRef = db.collection('usuarios');
+    console.log('🔍 Buscando usuario existente...');
+    
     const usuarioExistente = await usuariosRef
       .where('email', '==', email.toLowerCase())
       .get();
 
     if (!usuarioExistente.empty) {
+      console.log('⚠️ Usuario ya existe:', email);
       return res.status(400).json({ 
         exito: false, 
         error: 'El email ya está registrado' 
       });
     }
 
+    console.log('✅ Usuario no existe, procediendo con registro');
+
+    // Crear usuario
     const nuevoUsuario = {
       email: email.toLowerCase(),
       contraseña: await hashearContraseña(password),
@@ -503,9 +556,11 @@ app.post('/auth/registro', async (req, res) => {
       activo: true
     };
 
+    console.log('💾 Guardando usuario...');
     const docRef = await usuariosRef.add(nuevoUsuario);
     const usuarioId = docRef.id;
 
+    console.log('🎫 Generando token...');
     const token = generarToken({
       id: usuarioId,
       email: nuevoUsuario.email,
@@ -526,93 +581,16 @@ app.post('/auth/registro', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ Error en registro:', error);
+    console.error('💥 Error completo en registro:', {
+      message: error.message,
+      stack: error.stack,
+      name: error.name
+    });
+    
     res.status(500).json({
       exito: false,
-      error: 'Error interno del servidor'
-    });
-  }
-});
-
-app.post('/auth/login', async (req, res) => {
-  try {
-    if (rateLimitMiddleware(req, 20, 900000)) {
-      return res.status(429).json({ 
-        exito: false, 
-        error: 'Demasiados intentos. Intenta más tarde.' 
-      });
-    }
-
-    const { email, password } = req.body;
-
-    console.log('🔐 Solicitud de login:', { email });
-
-    if (!email || !password) {
-      return res.status(400).json({
-        exito: false,
-        error: 'Email y contraseña son requeridos'
-      });
-    }
-
-    if (!validarEmail(email)) {
-      return res.status(400).json({ 
-        exito: false, 
-        error: 'Email inválido' 
-      });
-    }
-
-    const usuariosRef = db.collection('usuarios');
-    const snapshot = await usuariosRef
-      .where('email', '==', email.toLowerCase())
-      .where('activo', '==', true)
-      .limit(1)
-      .get();
-
-    if (snapshot.empty) {
-      return res.status(401).json({ 
-        exito: false, 
-        error: 'Credenciales inválidas' 
-      });
-    }
-
-    const doc = snapshot.docs[0];
-    const usuario = { id: doc.id, ...doc.data() };
-
-    const contraseñaValida = await compararContraseña(password, usuario.contraseña);
-    if (!contraseñaValida) {
-      return res.status(401).json({ 
-        exito: false, 
-        error: 'Credenciales inválidas' 
-      });
-    }
-
-    await doc.ref.update({
-      ultimoLogin: new Date().toISOString()
-    });
-
-    const token = generarToken({
-      id: usuario.id,
-      email: usuario.email,
-      nombre: usuario.nombre
-    });
-
-    console.log('✅ Login exitoso para:', email);
-
-    res.json({
-      exito: true,
-      usuario: {
-        id: usuario.id,
-        nombre: usuario.nombre,
-        email: usuario.email
-      },
-      token
-    });
-
-  } catch (error) {
-    console.error('❌ Error en login:', error);
-    res.status(500).json({
-      exito: false,
-      error: 'Error interno del servidor'
+      error: 'Error interno del servidor',
+      detalles: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 });
