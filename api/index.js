@@ -473,26 +473,15 @@ app.post('/auth/test', (req, res) => {
 });
 
 
-
 app.post('/auth/registro', async (req, res) => {
   try {
     console.log('📝 Inicio de registro');
     console.log('📦 Body recibido:', req.body);
     
-    // Rate limiting check
-    if (rateLimitMiddleware(req, 10, 3600000)) {
-      console.log('⚠️ Rate limit excedido');
-      return res.status(429).json({ 
-        exito: false, 
-        error: 'Demasiadas solicitudes. Intenta más tarde.' 
-      });
-    }
-
     const { email, password, nombre } = req.body;
-    console.log('👤 Datos del usuario:', { email, nombre });
 
-    // Validaciones
-    if (!validarEmail(email)) {
+    // Validaciones básicas sin funciones externas
+    if (!email || !email.includes('@') || email.length < 5) {
       console.log('❌ Email inválido:', email);
       return res.status(400).json({ 
         exito: false, 
@@ -500,7 +489,7 @@ app.post('/auth/registro', async (req, res) => {
       });
     }
 
-    if (!validarContraseña(password)) {
+    if (!password || password.length < 6) {
       console.log('❌ Contraseña inválida');
       return res.status(400).json({ 
         exito: false, 
@@ -508,7 +497,7 @@ app.post('/auth/registro', async (req, res) => {
       });
     }
 
-    if (!validarNombre(nombre)) {
+    if (!nombre || nombre.trim().length < 2) {
       console.log('❌ Nombre inválido:', nombre);
       return res.status(400).json({ 
         exito: false, 
@@ -516,26 +505,33 @@ app.post('/auth/registro', async (req, res) => {
       });
     }
 
-    console.log('✅ Validaciones pasadas');
+    console.log('✅ Validaciones básicas pasadas');
 
-    // Verificar conexión Firebase
+    // Verificar Firebase
     if (!db) {
       console.error('❌ Firebase no inicializado');
       return res.status(500).json({
         exito: false,
-        error: 'Error de configuración del servidor'
+        error: 'Error de configuración del servidor - Firebase'
       });
     }
 
-    console.log('🔥 Firebase conectado');
+    console.log('🔥 Firebase disponible');
 
-    // Verificar usuario existente
-    const usuariosRef = db.collection('usuarios');
-    console.log('🔍 Buscando usuario existente...');
-    
-    const usuarioExistente = await usuariosRef
-      .where('email', '==', email.toLowerCase())
-      .get();
+    // Verificar usuario existente con try-catch
+    let usuarioExistente;
+    try {
+      const usuariosRef = db.collection('usuarios');
+      usuarioExistente = await usuariosRef
+        .where('email', '==', email.toLowerCase())
+        .get();
+    } catch (firebaseError) {
+      console.error('❌ Error consultando Firebase:', firebaseError);
+      return res.status(500).json({
+        exito: false,
+        error: 'Error de base de datos'
+      });
+    }
 
     if (!usuarioExistente.empty) {
       console.log('⚠️ Usuario ya existe:', email);
@@ -545,27 +541,65 @@ app.post('/auth/registro', async (req, res) => {
       });
     }
 
-    console.log('✅ Usuario no existe, procediendo con registro');
+    console.log('✅ Usuario no existe, creando...');
+
+    // Hash password con bcrypt básico
+    let passwordHash;
+    try {
+      const bcrypt = require('bcryptjs');
+      passwordHash = await bcrypt.hash(password, 10);
+    } catch (hashError) {
+      console.error('❌ Error hasheando password:', hashError);
+      return res.status(500).json({
+        exito: false,
+        error: 'Error procesando contraseña'
+      });
+    }
 
     // Crear usuario
     const nuevoUsuario = {
-      email: email.toLowerCase(),
-      contraseña: await hashearContraseña(password),
-      nombre: limpiarEntrada(nombre),
+      email: email.toLowerCase().trim(),
+      contraseña: passwordHash,
+      nombre: nombre.trim(),
       fechaRegistro: new Date().toISOString(),
       activo: true
     };
 
-    console.log('💾 Guardando usuario...');
-    const docRef = await usuariosRef.add(nuevoUsuario);
-    const usuarioId = docRef.id;
+    let usuarioId;
+    try {
+      const usuariosRef = db.collection('usuarios');
+      const docRef = await usuariosRef.add(nuevoUsuario);
+      usuarioId = docRef.id;
+    } catch (createError) {
+      console.error('❌ Error creando usuario:', createError);
+      return res.status(500).json({
+        exito: false,
+        error: 'Error guardando usuario'
+      });
+    }
 
-    console.log('🎫 Generando token...');
-    const token = generarToken({
-      id: usuarioId,
-      email: nuevoUsuario.email,
-      nombre: nuevoUsuario.nombre
-    });
+    console.log('✅ Usuario guardado con ID:', usuarioId);
+
+    // Generar token
+    let token;
+    try {
+      const jwt = require('jsonwebtoken');
+      token = jwt.sign(
+        { 
+          id: usuarioId,
+          email: nuevoUsuario.email,
+          nombre: nuevoUsuario.nombre
+        },
+        process.env.JWT_SECRET,
+        { expiresIn: '7d' }
+      );
+    } catch (tokenError) {
+      console.error('❌ Error generando token:', tokenError);
+      return res.status(500).json({
+        exito: false,
+        error: 'Error generando token'
+      });
+    }
 
     console.log('✅ Usuario registrado exitosamente:', email);
 
@@ -581,7 +615,7 @@ app.post('/auth/registro', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('💥 Error completo en registro:', {
+    console.error('💥 Error general en registro:', {
       message: error.message,
       stack: error.stack,
       name: error.name
@@ -590,11 +624,10 @@ app.post('/auth/registro', async (req, res) => {
     res.status(500).json({
       exito: false,
       error: 'Error interno del servidor',
-      detalles: process.env.NODE_ENV === 'development' ? error.message : undefined
+      detalles: error.message
     });
   }
 });
-
 // ===============================
 // RUTAS DE BÚSQUEDA
 // ===============================
