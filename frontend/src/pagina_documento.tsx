@@ -1,6 +1,6 @@
+import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from './AuthContext';
-import { useEffect, useState } from 'react';
 import { getDocumento, Article } from './services/api';
 
 // ✅ COMPONENTE HIGHLIGHT SIMPLE Y SEGURO (igual al de Pagina_principal)
