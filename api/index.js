@@ -179,94 +179,106 @@ try {
 }
 
 
+
 // ===============================
-// MIDDLEWARE DE EXPRESS
+// CONFIGURACIÓN DE CORS DEFINITIVA
 // ===============================
 
-// Configuración de CORS corregida para Vercel
 const allowedOrigins = [
-  'https://biorxiv.vercel.app',
+  'https://biorxiv.vercel.app',  // ← TU FRONTEND PRINCIPAL
   'https://biorxiv-git-main-gabriels-projects-137ca855.vercel.app',
   'https://biorxiv-hsggfxfqr-gabriels-projects-137ca855.vercel.app',
   
-  // URLs del backend para testing
+  // URLs del backend para testing interno
   'https://proyecto2-flame.vercel.app',
   'https://proyecto2-git-main-gabriels-projects-137ca855.vercel.app',
   
   // Desarrollo local
   'http://localhost:5173',
-  'http://localhost:3000'
+  'http://localhost:3000',
+  'http://localhost:4173'
 ];
 
 console.log('🌐 CORS Origins permitidos:', allowedOrigins);
 
+// Configurar Helmet con menos restricciones
 app.use(helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" },
-  crossOriginEmbedderPolicy: false
+  crossOriginEmbedderPolicy: false,
+  contentSecurityPolicy: false // Deshabilitar CSP que puede interferir
 }));
 
+// Middleware CORS personalizado MÁS PERMISIVO
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  
+  console.log('🔍 CORS Request:', {
+    method: req.method,
+    path: req.path,
+    origin: origin,
+    isPreflight: req.method === 'OPTIONS'
+  });
+
+  // Siempre permitir el origin si está en la lista, o si no hay origin
+  if (!origin || allowedOrigins.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin || '*');
+  } else {
+    console.log('⚠️ Origin no permitido:', origin);
+    // En desarrollo/debug, permitir temporalmente
+    res.header('Access-Control-Allow-Origin', origin);
+  }
+
+  // Headers CORS completos
+  res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS,PATCH');
+  res.header('Access-Control-Allow-Headers', [
+    'Content-Type',
+    'Authorization', 
+    'X-Requested-With',
+    'Accept',
+    'Origin',
+    'Cache-Control',
+    'X-File-Name'
+  ].join(','));
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.header('Access-Control-Max-Age', '86400');
+
+  // Si es OPTIONS (preflight), responder inmediatamente
+  if (req.method === 'OPTIONS') {
+    console.log('✅ Respondiendo a OPTIONS preflight');
+    return res.status(200).end();
+  }
+
+  next();
+});
+
+// Middleware adicional de CORS usando la librería
 app.use(cors({
   origin: function (origin, callback) {
-    console.log('🔍 CORS check - Origin:', origin);
+    console.log('📋 CORS Library check - Origin:', origin);
     
-    if (!origin) {
-      console.log('✅ CORS permitido - Sin origin');
-      return callback(null, true);
-    }
-    
-    if (allowedOrigins.indexOf(origin) !== -1 || 
-        process.env.NODE_ENV !== 'production') {
-      console.log('✅ CORS permitido para:', origin);
+    // Permitir sin origin o si está en lista
+    if (!origin || allowedOrigins.includes(origin)) {
+      console.log('✅ CORS permitido');
       callback(null, true);
     } else {
-      console.log('⚠️ CORS bloqueado para:', origin);
-      callback(null, true); // Temporal - permitir todo para debug
+      console.log('⚠️ CORS no en lista, permitiendo temporalmente');
+      callback(null, true); // Temporal para debug
     }
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   allowedHeaders: [
-    'Content-Type', 
-    'Authorization', 
-    'X-Requested-With', 
+    'Content-Type',
+    'Authorization',
+    'X-Requested-With',
     'Accept', 
     'Origin'
   ],
   credentials: true,
-  maxAge: 86400
+  maxAge: 86400,
+  optionsSuccessStatus: 200
 }));
 
-// Manejar OPTIONS explícitamente
-app.options('*', (req, res) => {
-  console.log('📋 OPTIONS para:', req.path, 'desde:', req.headers.origin);
-  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
-  res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS,PATCH');
-  res.header('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With,Accept,Origin');
-  res.header('Access-Control-Allow-Credentials', 'true');
-  res.status(200).end();
-});
-
-// Middleware de logging
-app.use((req, res, next) => {
-  console.log(`📡 ${req.method} ${req.path} - Origin: ${req.headers.origin || 'N/A'}`);
-  next();
-});
-
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-
-// Rate limiting
-const rateLimitWindowMs = 15 * 60 * 1000;
-const maxRequestsPerWindow = 100;
-
-app.use((req, res, next) => {
-  if (rateLimitMiddleware(req, maxRequestsPerWindow, rateLimitWindowMs)) {
-    return res.status(429).json({
-      exito: false,
-      error: 'Demasiadas solicitudes. Intenta de nuevo más tarde.'
-    });
-  }
-  next();
-});
+console.log('✅ CORS configurado con middleware dual');
 
 // ===============================
 // MIDDLEWARE DE AUTENTICACIÓN
@@ -338,20 +350,30 @@ app.get('/health', (req, res) => {
 // ===============================
 
 app.get('/test', (req, res) => {
-  console.log('🧪 Test endpoint accessed');
-  console.log('🔍 Origin:', req.headers.origin);
+  console.log('🧪 Test endpoint - CORS test');
+  console.log('🔍 Request origin:', req.headers.origin);
   
   res.json({
     status: 'OK',
-    message: 'Backend funcionando correctamente',
+    message: 'CORS test exitoso',
     timestamp: new Date().toISOString(),
     origin: req.headers.origin,
-    environment: process.env.NODE_ENV || 'development',
     corsEnabled: true,
-    allowedOrigins: [
-      'https://biorxiv.vercel.app',
-      'https://biorxiv-git-main-gabriels-projects-137ca855.vercel.app'
-    ]
+    environment: process.env.NODE_ENV || 'development'
+  });
+});
+
+// Ruta específica para test CORS desde frontend
+app.post('/test-cors', (req, res) => {
+  console.log('🧪 POST Test CORS');
+  console.log('🔍 Origin:', req.headers.origin);
+  console.log('📦 Body:', req.body);
+  
+  res.json({
+    status: 'OK',
+    message: 'POST CORS test exitoso',
+    receivedData: req.body,
+    timestamp: new Date().toISOString()
   });
 });
 
@@ -391,6 +413,36 @@ app.get('/routes', (req, res) => {
     knownRoutes: knownRoutes,
     timestamp: new Date().toISOString()
   });
+});
+
+app.use((req, res, next) => {
+  const timestamp = new Date().toISOString();
+  
+  console.log(`\n📡 ${timestamp} - ${req.method} ${req.path}`);
+  console.log('🔍 Headers importantes:', {
+    origin: req.headers.origin,
+    'content-type': req.headers['content-type'],
+    authorization: req.headers.authorization ? '***present***' : 'none',
+    'user-agent': req.headers['user-agent']?.substring(0, 50) + '...'
+  });
+  
+  if (req.body && Object.keys(req.body).length > 0) {
+    console.log('📦 Body keys:', Object.keys(req.body));
+  }
+  
+  // Interceptar response para ver qué headers se están enviando
+  const originalSend = res.send;
+  res.send = function(data) {
+    console.log('📤 Response headers:', {
+      'access-control-allow-origin': res.get('Access-Control-Allow-Origin'),
+      'access-control-allow-methods': res.get('Access-Control-Allow-Methods'),
+      'access-control-allow-headers': res.get('Access-Control-Allow-Headers'),
+      'status': res.statusCode
+    });
+    return originalSend.call(this, data);
+  };
+  
+  next();
 });
 
 // ===============================
