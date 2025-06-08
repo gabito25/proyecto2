@@ -808,7 +808,7 @@ app.post('/auth/login', async (req, res) => {
 // RUTAS DE BÚSQUEDA
 // ===============================
 
-app.get('/busqueda/articulos', authMiddleware, async (req, res) => {
+aapp.get('/busqueda/articulos', authMiddleware, async (req, res) => {
   try {
     const { 
       q = '', 
@@ -816,25 +816,24 @@ app.get('/busqueda/articulos', authMiddleware, async (req, res) => {
       limite = 20,
       categoria,
       tipo,
-      autor,
-      fecha,
-      entidades
+      autor
     } = req.query;
 
     const paginaNum = parseInt(pagina);
     const limiteNum = Math.min(parseInt(limite), 100);
     const skip = (paginaNum - 1) * limiteNum;
 
-    console.log('🔍 Búsqueda Universal Atlas Search:', { q, autor, categoria, pagina: paginaNum });
+    console.log('🔍 Búsqueda Atlas Search Corregida:', { q, autor, categoria, pagina: paginaNum });
 
     const mongoDb = await connectToMongoDB();
     const collection = mongoDb.collection('documents');
 
-    const pipeline = [];
+    let pipeline = [];
 
     if (q && q.toString().trim()) {
-      const busquedaLimpia = limpiarEntrada(q.toString());
+      const busquedaLimpia = q.toString().trim();
       
+      // Pipeline de búsqueda con allowAnalyzedField: true
       pipeline.push({
         $search: {
           index: "doc_index",
@@ -873,39 +872,31 @@ app.get('/busqueda/articulos', authMiddleware, async (req, res) => {
                 text: {
                   query: busquedaLimpia,
                   path: "rel_authors",
-                  fuzzy: { maxEdits: 1 },
                   score: { boost: { value: 2.0 } }
-                }
-              },
-              {
-                wildcard: {
-                  query: `*${busquedaLimpia}*`,
-                  path: ["rel_title", "rel_abs", "category"],
-                  score: { boost: { value: 1.2 } }
                 }
               }
             ],
             minimumShouldMatch: 1
           },
-          highlight: {
-            path: ["rel_title", "rel_abs", "category", "type", "rel_site", "rel_authors"]
-          }
+          // AGREGAR allowAnalyzedField para evitar el error
+          allowAnalyzedField: true
         }
       });
 
       pipeline.push({
         $addFields: {
-          score: { $meta: "searchScore" },
-          highlights: { $meta: "searchHighlights" }
+          score: { $meta: "searchScore" }
         }
       });
     } else {
+      // Búsqueda sin texto - obtener todos los documentos
       pipeline.push({
         $search: {
           index: "doc_index",
           wildcard: {
             query: "*",
-            path: "rel_title"
+            path: "rel_title",
+            allowAnalyzedField: true
           }
         }
       });
@@ -917,7 +908,7 @@ app.get('/busqueda/articulos', authMiddleware, async (req, res) => {
       });
     }
 
-    // Filtros
+    // Filtros adicionales
     const filtros = {};
     
     if (categoria) {
@@ -929,18 +920,12 @@ app.get('/busqueda/articulos', authMiddleware, async (req, res) => {
     if (autor) {
       filtros.rel_authors = { $regex: autor, $options: 'i' };
     }
-    if (fecha) {
-      filtros.$or = [
-        { rel_date: { $regex: fecha } },
-        { rel_date: { $regex: `/${fecha}` } },
-        { rel_date: { $regex: `${fecha}/` } }
-      ];
-    }
 
     if (Object.keys(filtros).length > 0) {
       pipeline.push({ $match: filtros });
     }
 
+    // Paginación y proyección
     pipeline.push({
       $facet: {
         metadata: [
@@ -962,18 +947,13 @@ app.get('/busqueda/articulos', authMiddleware, async (req, res) => {
             rel_date: 1,
             rel_doi: 1,
             rel_link: 1,
-            rel_site: 1,
-            rel_num_authors: 1,
             rel_authors: { $slice: ['$rel_authors', 10] },
-            version: 1,
-            license: 1,
             category: 1,
             type: 1,
             entities: 1,
             jobId: 1,
             content: 1,
             score: 1,
-            highlights: 1,
             author_name: { 
               $cond: {
                 if: { $gt: [{ $size: { $ifNull: ['$rel_authors', []] } }, 0] },
@@ -993,7 +973,7 @@ app.get('/busqueda/articulos', authMiddleware, async (req, res) => {
       }
     });
 
-    console.log('🔍 Pipeline Universal ejecutándose...');
+    console.log('🔍 Ejecutando pipeline corregido...');
 
     const resultados = await collection.aggregate(pipeline).toArray();
     
@@ -1018,7 +998,7 @@ app.get('/busqueda/articulos', authMiddleware, async (req, res) => {
     
     const datos = resultados[0].datos || [];
 
-    console.log(`✅ Búsqueda Universal Exitosa: ${datos.length}/${metadata.total} documentos`);
+    console.log(`✅ Búsqueda exitosa: ${datos.length}/${metadata.total} documentos`);
 
     res.status(200).json({
       exito: true,
@@ -1027,19 +1007,57 @@ app.get('/busqueda/articulos', authMiddleware, async (req, res) => {
       pagina: metadata.pagina,
       limite: metadata.limite,
       totalPaginas: metadata.totalPaginas,
-      metodo: 'universal_atlas_search',
+      metodo: 'atlas_search_fixed',
       indice: 'doc_index',
-      query: q || 'todas',
-      tiempoRespuesta: Date.now()
+      query: q || 'todas'
     });
 
   } catch (error) {
-    console.error('❌ Error en búsqueda universal:', error);
-    res.status(500).json({ 
-      exito: false, 
-      error: 'Error al realizar la búsqueda',
-      detalles: error.message
-    });
+    console.error('❌ Error en búsqueda:', error);
+    
+    // Si el error persiste, usar búsqueda básica sin Atlas Search
+    try {
+      console.log('🔄 Intentando búsqueda básica...');
+      
+      const mongoDb = await connectToMongoDB();
+      const collection = mongoDb.collection('documents');
+      
+      const filtro = {};
+      if (q && q.toString().trim()) {
+        filtro.$or = [
+          { rel_title: { $regex: q, $options: 'i' } },
+          { rel_abs: { $regex: q, $options: 'i' } },
+          { category: { $regex: q, $options: 'i' } }
+        ];
+      }
+      
+      const documentos = await collection
+        .find(filtro)
+        .limit(parseInt(limite) || 20)
+        .skip((parseInt(pagina) - 1) * (parseInt(limite) || 20))
+        .toArray();
+      
+      const total = await collection.countDocuments(filtro);
+      
+      res.status(200).json({
+        exito: true,
+        datos: documentos,
+        total: total,
+        pagina: parseInt(pagina) || 1,
+        limite: parseInt(limite) || 20,
+        totalPaginas: Math.ceil(total / (parseInt(limite) || 20)),
+        metodo: 'basic_search_fallback',
+        mensaje: 'Búsqueda básica (Atlas Search no disponible)'
+      });
+      
+    } catch (fallbackError) {
+      console.error('❌ Error en búsqueda básica:', fallbackError);
+      res.status(500).json({ 
+        exito: false, 
+        error: 'Error al realizar la búsqueda',
+        detalles: error.message
+      });
+    }
   }
 });
 
