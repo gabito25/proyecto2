@@ -332,6 +332,67 @@ app.get('/health', (req, res) => {
   });
 });
 
+
+// ===============================
+// RUTAS DE DEBUG - AGREGAR DESPUÉS DE /health
+// ===============================
+
+app.get('/test', (req, res) => {
+  console.log('🧪 Test endpoint accessed');
+  console.log('🔍 Origin:', req.headers.origin);
+  
+  res.json({
+    status: 'OK',
+    message: 'Backend funcionando correctamente',
+    timestamp: new Date().toISOString(),
+    origin: req.headers.origin,
+    environment: process.env.NODE_ENV || 'development',
+    corsEnabled: true,
+    allowedOrigins: [
+      'https://biorxiv.vercel.app',
+      'https://biorxiv-git-main-gabriels-projects-137ca855.vercel.app'
+    ]
+  });
+});
+
+app.get('/routes', (req, res) => {
+  const routes = [];
+  
+  // Intentar listar rutas si es posible
+  try {
+    app._router.stack.forEach(function(r){
+      if (r.route && r.route.path){
+        routes.push({
+          path: r.route.path,
+          methods: Object.keys(r.route.methods)
+        });
+      }
+    });
+  } catch (error) {
+    console.log('No se pudieron listar rutas automáticamente');
+  }
+  
+  // Rutas conocidas manualmente
+  const knownRoutes = [
+    { path: '/', methods: ['GET'] },
+    { path: '/health', methods: ['GET'] },
+    { path: '/test', methods: ['GET'] },
+    { path: '/routes', methods: ['GET'] },
+    { path: '/auth/login', methods: ['POST'] },
+    { path: '/auth/registro', methods: ['POST'] },
+    { path: '/busqueda/articulos', methods: ['GET'] },
+    { path: '/documento/:id', methods: ['GET'] }
+  ];
+  
+  res.json({
+    status: 'OK',
+    message: 'Rutas disponibles',
+    detectedRoutes: routes,
+    knownRoutes: knownRoutes,
+    timestamp: new Date().toISOString()
+  });
+});
+
 // ===============================
 // RUTAS DE AUTENTICACIÓN
 // ===============================
