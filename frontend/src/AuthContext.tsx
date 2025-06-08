@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import type { ReactNode } from 'react';
-import { buildApiUrl, API_ENDPOINTS } from './services/api';
+import { logout as apiLogout } from './services/api';
 
 interface Usuario {
   id: string;
@@ -36,7 +36,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   // Cargar datos del localStorage al iniciar
   useEffect(() => {
-    const storedToken = localStorage.getItem('token');
+    const storedToken = localStorage.getItem('auth_token');
     const storedUser = localStorage.getItem('usuario');
 
     if (storedToken && storedUser) {
@@ -55,29 +55,21 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const login = (userData: Usuario, authToken: string) => {
     setUsuario(userData);
     setToken(authToken);
-    localStorage.setItem('token', authToken);
+    localStorage.setItem('auth_token', authToken);
     localStorage.setItem('usuario', JSON.stringify(userData));
     console.log('✅ Login exitoso:', userData.nombre);
   };
 
   const logout = async () => {
     try {
-      if (token) {
-        // ✅ USAR URL DINÁMICA PARA VERCEL
-        await fetch(buildApiUrl(API_ENDPOINTS.LOGOUT), {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          }
-        });
-      }
+      await apiLogout();
     } catch (error) {
       console.error('Error en logout del servidor:', error);
     } finally {
       setUsuario(null);
       setToken(null);
-      localStorage.clear();
+      localStorage.removeItem('auth_token');
+      localStorage.removeItem('usuario');
       console.log('✅ Sesión cerrada');
     }
   };
