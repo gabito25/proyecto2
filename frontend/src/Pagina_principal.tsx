@@ -1,15 +1,17 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from './AuthContext';
 import { HighlightText, useSearchTerms } from './utils/highlight';
-import { buildApiUrl, API_ENDPOINTS } from './services/api';
+import { searchArticles, Article, SearchResponse } from './services/api';
 
 const Pagina_principal: React.FC = () => {
+  const navigate = useNavigate();
   const { usuario, token, logout } = useAuth();
   
   // Estados principales
   const [terminoBusqueda, setTerminoBusqueda] = useState<string>('');
   const [autorBusqueda, setAutorBusqueda] = useState<string>('');
-  const [resultados, setResultados] = useState<any[]>([]);
+  const [resultados, setResultados] = useState<Article[]>([]);
   const [cargando, setCargando] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   
@@ -18,11 +20,13 @@ const Pagina_principal: React.FC = () => {
   const [totalResultados, setTotalResultados] = useState<number>(0);
   const [totalPaginas, setTotalPaginas] = useState<number>(0);
 
-  // ✅ NUEVOS ESTADOS PARA FACETS Y FILTROS
-  const [facetas, setFacetas] = useState<any>({});
+  // Estados para filtros
   const [categoriaSeleccionada, setCategoriaSeleccionada] = useState<string>('');
   const [tipoSeleccionado, setTipoSeleccionado] = useState<string>('');
-  const [entidadSeleccionada, setEntidadSeleccionada] = useState<string>('');
+
+  // Estados para facetas derivadas de resultados
+  const [categorias, setCategorias] = useState<string[]>([]);
+  const [autoresFrequentes, setAutoresFrequentes] = useState<string[]>([]);
 
   // Verificar que el usuario y token estén disponibles
   useEffect(() => {
@@ -37,124 +41,121 @@ const Pagina_principal: React.FC = () => {
       cargando,
       error,
       usuario: usuario?.nombre,
-      facetas: Object.keys(facetas)
+      categorias: categorias.length
     });
-  }, [resultados, totalResultados, cargando, error, usuario, facetas]);
+  }, [resultados, totalResultados, cargando, error, usuario, categorias]);
 
+  // Función para navegar al documento
+  const navegarADocumento = (documentoId: string) => {
+    console.log('📄 Navegando a documento:', documentoId);
+    navigate(`/documento/${documentoId}`);
+  };
 
-const realizarBusqueda = async () => {
-  try {
-    console.log('🔍 Iniciando búsqueda...', { 
-      terminoBusqueda, 
-      autorBusqueda, 
-      categoriaSeleccionada,
-      paginaActual 
-    });
-    
-    setCargando(true);
-    setError(null);
-    
-    // Verificar token
-    console.log('🔑 Token presente:', !!token);
-    
-    if (!token) {
-      setError('No hay sesión activa. Por favor, inicia sesión nuevamente.');
-      setCargando(false);
-      return;
-    }
-
-    // ✅ CONSTRUIR PARÁMETROS CON FILTROS
-    const params = new URLSearchParams();
-    if (terminoBusqueda?.trim()) {
-      params.append('q', terminoBusqueda.trim());
-    }
-    if (autorBusqueda?.trim()) {
-      params.append('autor', autorBusqueda.trim());
-    }
-    if (categoriaSeleccionada?.trim()) {
-      params.append('categoria', categoriaSeleccionada.trim());
-    }
-    if (tipoSeleccionado?.trim()) {
-      params.append('tipo', tipoSeleccionado.trim());
-    }
-    if (entidadSeleccionada?.trim()) {
-      params.append('entidades', entidadSeleccionada.trim());
-    }
-    params.append('pagina', paginaActual.toString());
-    params.append('limite', '10');
-
-    // ✅ URL CORREGIDA PARA VERCEL
-    const url = buildApiUrl(`${API_ENDPOINTS.SEARCH_ARTICLES}?${params.toString()}`);
-    console.log('📡 URL de búsqueda:', url);
-
-    // Realizar petición
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
+  const realizarBusqueda = async () => {
+    try {
+      console.log('🔍 Iniciando búsqueda...', { 
+        terminoBusqueda, 
+        autorBusqueda, 
+        categoriaSeleccionada,
+        paginaActual 
+      });
+      
+      setCargando(true);
+      setError(null);
+      
+      // Verificar token
+      console.log('🔑 Token presente:', !!token);
+      
+      if (!token) {
+        setError('No hay sesión activa. Por favor, inicia sesión nuevamente.');
+        setCargando(false);
+        return;
       }
-    });
 
-    console.log('📥 Respuesta recibida:', response.status, response.statusText);
+      // Usar la función searchArticles del API
+      const data: SearchResponse = await searchArticles(
+        terminoBusqueda || '',
+        paginaActual,
+        10,
+        categoriaSeleccionada || undefined,
+        autorBusqueda || undefined
+      );
 
-    const data = await response.json();
-    console.log('📦 Datos recibidos:', data);
+      console.log('📦 Datos recibidos:', data);
 
-    if (!response.ok) {
-      throw new Error(data.error || `Error ${response.status}: ${response.statusText}`);
-    }
+      if (data.exito) {
+        setResultados(data.datos || []);
+        setTotalResultados(data.total || 0);
+        setTotalPaginas(data.totalPaginas || 1);
+        
+        // Extraer facetas de los resultados
+        extraerFacetas(data.datos || []);
+        
+        console.log(`✅ Éxito: ${(data.datos || []).length} resultados cargados`);
+      } else {
+        setError(data.mensaje || 'Error en la búsqueda');
+        setResultados([]);
+        limpiarFacetas();
+      }
 
-    if (data.exito) {
-      setResultados(data.datos || []);
-      setTotalResultados(data.total || 0);
-      setTotalPaginas(data.totalPaginas || 1);
-      setFacetas(data.facetas || {}); // ✅ GUARDAR FACETAS
-      console.log(`✅ Éxito: ${(data.datos || []).length} resultados cargados`);
-      console.log('📊 Facetas disponibles:', data.facetas);
-    } else {
-      setError(data.error || 'Error en la búsqueda');
+    } catch (error) {
+      console.error('💥 Error en búsqueda:', error);
+      setError(error instanceof Error ? error.message : 'Error de conexión');
       setResultados([]);
-      setFacetas({});
+      limpiarFacetas();
+    } finally {
+      setCargando(false);
     }
+  };
 
-  } catch (error) {
-    console.error('💥 Error en búsqueda:', error);
-    setError(error instanceof Error ? error.message : 'Error de conexión');
-    setResultados([]);
-    setFacetas({});
-  } finally {
-    setCargando(false);
-  }
-};
+  // Función para extraer facetas de los resultados
+  const extraerFacetas = (articulos: Article[]) => {
+    // Extraer categorías únicas
+    const categoriasUnicas = [...new Set(
+      articulos
+        .map(art => art.category)
+        .filter(cat => cat && cat.trim().length > 0)
+    )].slice(0, 10);
 
-  // ✅ FUNCIÓN PARA APLICAR FILTRO DE FACETA
-  const aplicarFiltro = (tipo: 'categoria' | 'tipo' | 'entidad', valor: string) => {
-    console.log(`🔧 Aplicando filtro ${tipo}:`, valor);
+    // Extraer autores frecuentes
+    const autoresUnicos = [...new Set(
+      articulos
+        .map(art => art.author_name)
+        .filter(autor => autor && autor.trim().length > 0)
+    )].slice(0, 8);
+
+    setCategorias(categoriasUnicas);
+    setAutoresFrequentes(autoresUnicos);
+  };
+
+  const limpiarFacetas = () => {
+    setCategorias([]);
+    setAutoresFrequentes([]);
+  };
+
+  // Función para aplicar filtro de categoría
+  const aplicarFiltroCategoria = (categoria: string) => {
+    console.log(`🔧 Aplicando filtro categoría:`, categoria);
     
     // Limpiar resultados anteriores
     setResultados([]);
     setPaginaActual(1);
     
-    // Aplicar filtro
-    switch (tipo) {
-      case 'categoria':
-        setCategoriaSeleccionada(categoriaSeleccionada === valor ? '' : valor);
-        break;
-      case 'tipo':
-        setTipoSeleccionado(tipoSeleccionado === valor ? '' : valor);
-        break;
-      case 'entidad':
-        setEntidadSeleccionada(entidadSeleccionada === valor ? '' : valor);
-        break;
-    }
+    // Alternar selección
+    setCategoriaSeleccionada(categoriaSeleccionada === categoria ? '' : categoria);
   };
 
-  // ✅ LIMPIAR TODOS LOS FILTROS
+  // Función para seleccionar autor desde facetas
+  const seleccionarAutor = (autor: string) => {
+    setAutorBusqueda(autor);
+    setPaginaActual(1);
+  };
+
+  // Limpiar todos los filtros
   const limpiarFiltros = () => {
     setCategoriaSeleccionada('');
     setTipoSeleccionado('');
-    setEntidadSeleccionada('');
+    setAutorBusqueda('');
     setPaginaActual(1);
   };
 
@@ -182,22 +183,22 @@ const realizarBusqueda = async () => {
     setPaginaActual(nuevaPagina);
   };
 
-  // ✅ EJECUTAR BÚSQUEDA CUANDO CAMBIEN FILTROS O PÁGINA
+  // Ejecutar búsqueda cuando cambien filtros o página
   useEffect(() => {
-    if (paginaActual > 1 || categoriaSeleccionada || tipoSeleccionado || entidadSeleccionada) {
+    if (paginaActual > 1 || categoriaSeleccionada) {
       realizarBusqueda();
     }
-  }, [paginaActual, categoriaSeleccionada, tipoSeleccionado, entidadSeleccionada]);
+  }, [paginaActual, categoriaSeleccionada]);
 
-  // ✅ CALCULAR SEARCH TERMS UNA VEZ A NIVEL DE COMPONENTE
+  // Calcular search terms una vez a nivel de componente
   const searchTerms = useSearchTerms(terminoBusqueda, autorBusqueda);
 
-  // ✅ ESTILOS MEJORADOS
+  // Estilos
   const containerStyle: React.CSSProperties = {
     minHeight: '100vh',
     backgroundColor: '#f5f5f5',
     color: '#000000',
-    fontFamily: 'Arial, sans-serif'
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif'
   };
 
   const headerStyle: React.CSSProperties = {
@@ -207,13 +208,17 @@ const realizarBusqueda = async () => {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
-    boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+    boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+    position: 'sticky' as const,
+    top: 0,
+    zIndex: 100
   };
 
   const titleStyle: React.CSSProperties = {
     fontSize: '1.8rem',
-    fontWeight: 'bold',
-    color: '#333333'
+    fontWeight: '600',
+    color: '#2c3e50',
+    margin: 0
   };
 
   const userInfoStyle: React.CSSProperties = {
@@ -227,9 +232,11 @@ const realizarBusqueda = async () => {
     color: 'white',
     border: 'none',
     padding: '0.5rem 1rem',
-    borderRadius: '4px',
+    borderRadius: '6px',
     cursor: 'pointer',
-    fontSize: '0.9rem'
+    fontSize: '0.9rem',
+    fontWeight: '500',
+    transition: 'all 0.2s ease'
   };
 
   const searchContainerStyle: React.CSSProperties = {
@@ -246,7 +253,7 @@ const realizarBusqueda = async () => {
     padding: '0.75rem',
     fontSize: '1rem',
     border: '1px solid #ddd',
-    borderRadius: '4px',
+    borderRadius: '6px',
     marginRight: '1rem',
     color: '#000000'
   };
@@ -256,7 +263,7 @@ const realizarBusqueda = async () => {
     padding: '0.75rem',
     fontSize: '1rem',
     border: '1px solid #ddd',
-    borderRadius: '4px',
+    borderRadius: '6px',
     marginRight: '1rem',
     color: '#000000'
   };
@@ -266,10 +273,12 @@ const realizarBusqueda = async () => {
     color: 'white',
     border: 'none',
     padding: '0.75rem 1.5rem',
-    borderRadius: '4px',
+    borderRadius: '6px',
     fontSize: '1rem',
     cursor: 'pointer',
-    marginLeft: '0.5rem'
+    marginLeft: '0.5rem',
+    fontWeight: '500',
+    transition: 'all 0.2s ease'
   };
 
   const resultsContainerStyle: React.CSSProperties = {
@@ -295,15 +304,16 @@ const realizarBusqueda = async () => {
     padding: '1.5rem',
     borderBottom: '1px solid #eee',
     cursor: 'pointer',
-    transition: 'background-color 0.2s',
+    transition: 'all 0.2s ease',
     color: '#000000'
   };
 
   const articleTitleStyle: React.CSSProperties = {
     fontSize: '1.2rem',
-    fontWeight: 'bold',
+    fontWeight: '600',
     color: '#007bff',
-    marginBottom: '0.5rem'
+    marginBottom: '0.5rem',
+    lineHeight: '1.4'
   };
 
   const articleAuthorStyle: React.CSSProperties = {
@@ -314,8 +324,13 @@ const realizarBusqueda = async () => {
 
   const articleAbstractStyle: React.CSSProperties = {
     color: '#333333',
-    lineHeight: '1.5',
-    margin: '0.5rem 0'
+    lineHeight: '1.6',
+    margin: '0.5rem 0',
+    maxHeight: '4.8rem',
+    overflow: 'hidden',
+    display: '-webkit-box',
+    WebkitLineClamp: 3,
+    WebkitBoxOrient: 'vertical' as const
   };
 
   const articleMetaStyle: React.CSSProperties = {
@@ -328,7 +343,7 @@ const realizarBusqueda = async () => {
     display: 'flex',
     justifyContent: 'center',
     alignItems: 'center',
-    padding: '1rem',
+    padding: '2rem 1rem',
     gap: '0.5rem'
   };
 
@@ -338,7 +353,8 @@ const realizarBusqueda = async () => {
     backgroundColor: '#ffffff',
     color: '#000000',
     cursor: 'pointer',
-    borderRadius: '4px'
+    borderRadius: '6px',
+    transition: 'all 0.2s ease'
   };
 
   const activePageButtonStyle: React.CSSProperties = {
@@ -349,8 +365,8 @@ const realizarBusqueda = async () => {
   };
 
   const loadingStyle: React.CSSProperties = {
-    textAlign: 'center',
-    padding: '2rem',
+    textAlign: 'center' as const,
+    padding: '3rem 2rem',
     fontSize: '1.2rem',
     color: '#666666'
   };
@@ -360,11 +376,11 @@ const realizarBusqueda = async () => {
     color: '#721c24',
     padding: '1rem',
     margin: '1rem 2rem',
-    borderRadius: '4px',
+    borderRadius: '6px',
     border: '1px solid #f5c6cb'
   };
 
-  // ✅ ESTILOS PARA FACETAS
+  // Estilos para facetas
   const facetContainerStyle: React.CSSProperties = {
     backgroundColor: '#ffffff',
     padding: '1.5rem',
@@ -383,7 +399,7 @@ const realizarBusqueda = async () => {
     borderRadius: '15px',
     cursor: 'pointer',
     fontSize: '0.85rem',
-    transition: 'all 0.2s'
+    transition: 'all 0.2s ease'
   };
 
   const activeFacetButtonStyle: React.CSSProperties = {
@@ -393,6 +409,17 @@ const realizarBusqueda = async () => {
     borderColor: '#007bff'
   };
 
+  const entitiesStyle: React.CSSProperties = {
+    display: 'inline-block',
+    backgroundColor: '#e3f2fd',
+    color: '#1565c0',
+    padding: '0.2rem 0.5rem',
+    borderRadius: '10px',
+    fontSize: '0.75rem',
+    marginRight: '0.25rem',
+    marginTop: '0.25rem'
+  };
+
   return (
     <div style={containerStyle}>
       {/* Header */}
@@ -400,7 +427,7 @@ const realizarBusqueda = async () => {
         <h1 style={titleStyle}>BioRxiv Search</h1>
         <div style={userInfoStyle}>
           {usuario && (
-            <span style={{color: '#333333'}}>
+            <span style={{color: '#333333', fontWeight: '500'}}>
               Bienvenido, {usuario.nombre}
             </span>
           )}
@@ -442,11 +469,11 @@ const realizarBusqueda = async () => {
               cursor: cargando ? 'not-allowed' : 'pointer'
             }}
           >
-            {cargando ? 'Buscando...' : 'Buscar'}
+            {cargando ? '🔍 Buscando...' : '🔍 Buscar'}
           </button>
 
-          {/* ✅ BOTÓN LIMPIAR FILTROS */}
-          {(categoriaSeleccionada || tipoSeleccionado || entidadSeleccionada) && (
+          {/* Botón limpiar filtros */}
+          {(categoriaSeleccionada || autorBusqueda) && (
             <button
               onClick={limpiarFiltros}
               style={{
@@ -455,7 +482,7 @@ const realizarBusqueda = async () => {
                 marginLeft: '0.5rem'
               }}
             >
-              Limpiar Filtros
+              🗑️ Limpiar Filtros
             </button>
           )}
         </div>
@@ -471,29 +498,30 @@ const realizarBusqueda = async () => {
       {/* Loading */}
       {cargando && (
         <div style={loadingStyle}>
-          🔍 Buscando artículos...
+          <div style={{fontSize: '2rem', marginBottom: '1rem'}}>🔍</div>
+          Buscando artículos...
         </div>
       )}
 
-      {/* ✅ FACETAS Y RESULTADOS */}
+      {/* Facetas y resultados */}
       {!cargando && !error && (
         <div style={resultsContainerStyle}>
-          {/* ✅ FACETAS SEGÚN DOCUMENTACIÓN */}
-          {facetas && Object.keys(facetas).length > 0 && (
+          {/* Facetas */}
+          {(categorias.length > 0 || autoresFrequentes.length > 0) && (
             <div style={facetContainerStyle}>
               <h3 style={{ marginBottom: '1rem', color: '#333', fontSize: '1.1rem' }}>
                 🔍 Filtros Disponibles
               </h3>
               
               {/* Facet Categorías */}
-              {facetas.categorias && facetas.categorias.length > 0 && (
+              {categorias.length > 0 && (
                 <div style={{ marginBottom: '1rem' }}>
                   <strong style={{ color: '#666', fontSize: '0.9rem' }}>📂 Categorías:</strong>
                   <div style={{ marginTop: '0.5rem' }}>
-                    {facetas.categorias.slice(0, 10).map((cat: string, idx: number) => (
+                    {categorias.map((cat: string, idx: number) => (
                       <button
                         key={idx}
-                        onClick={() => aplicarFiltro('categoria', cat)}
+                        onClick={() => aplicarFiltroCategoria(cat)}
                         style={categoriaSeleccionada === cat ? activeFacetButtonStyle : facetButtonStyle}
                         onMouseEnter={(e) => {
                           if (categoriaSeleccionada !== cat) {
@@ -514,51 +542,32 @@ const realizarBusqueda = async () => {
               )}
 
               {/* Facet Autores */}
-              {facetas.autores && facetas.autores.length > 0 && (
+              {autoresFrequentes.length > 0 && (
                 <div style={{ marginBottom: '1rem' }}>
                   <strong style={{ color: '#666', fontSize: '0.9rem' }}>👤 Autores frecuentes:</strong>
                   <div style={{ marginTop: '0.5rem' }}>
-                    {facetas.autores.slice(0, 8).map((autor: string, idx: number) => (
+                    {autoresFrequentes.map((autor: string, idx: number) => (
                       <button
                         key={idx}
-                        onClick={() => setAutorBusqueda(autor)}
-                        style={facetButtonStyle}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.backgroundColor = '#e9ecef';
+                        onClick={() => seleccionarAutor(autor)}
+                        style={{
+                          ...facetButtonStyle,
+                          backgroundColor: autorBusqueda === autor ? '#28a745' : '#f8f9fa',
+                          color: autorBusqueda === autor ? 'white' : '#333',
+                          borderColor: autorBusqueda === autor ? '#28a745' : '#ddd'
                         }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.backgroundColor = '#f8f9fa';
-                        }}
-                      >
-                        {autor}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Facet Entidades */}
-              {facetas.entidades && facetas.entidades.length > 0 && (
-                <div style={{ marginBottom: '1rem' }}>
-                  <strong style={{ color: '#666', fontSize: '0.9rem' }}>🏷️ Entidades:</strong>
-                  <div style={{ marginTop: '0.5rem' }}>
-                    {facetas.entidades.slice(0, 12).map((entidad: string, idx: number) => (
-                      <button
-                        key={idx}
-                        onClick={() => aplicarFiltro('entidad', entidad)}
-                        style={entidadSeleccionada === entidad ? activeFacetButtonStyle : facetButtonStyle}
                         onMouseEnter={(e) => {
-                          if (entidadSeleccionada !== entidad) {
+                          if (autorBusqueda !== autor) {
                             e.currentTarget.style.backgroundColor = '#e9ecef';
                           }
                         }}
                         onMouseLeave={(e) => {
-                          if (entidadSeleccionada !== entidad) {
+                          if (autorBusqueda !== autor) {
                             e.currentTarget.style.backgroundColor = '#f8f9fa';
                           }
                         }}
                       >
-                        {entidad}
+                        {autor}
                       </button>
                     ))}
                   </div>
@@ -568,105 +577,139 @@ const realizarBusqueda = async () => {
           )}
 
           {/* Resumen de resultados */}
-          <div style={resultsSummaryStyle}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span>
-                Encontrados {totalResultados} resultados (Página {paginaActual} de {totalPaginas})
-              </span>
-              
-              {/* ✅ INDICADORES DE FILTROS ACTIVOS */}
-              <div style={{ fontSize: '0.85rem' }}>
-                {categoriaSeleccionada && (
-                  <span style={{ 
-                    backgroundColor: '#007bff', 
-                    color: 'white', 
-                    padding: '0.2rem 0.5rem', 
-                    borderRadius: '3px', 
-                    marginLeft: '0.5rem' 
-                  }}>
-                    📂 {categoriaSeleccionada}
-                  </span>
-                )}
-                {entidadSeleccionada && (
-                  <span style={{ 
-                    backgroundColor: '#28a745', 
-                    color: 'white', 
-                    padding: '0.2rem 0.5rem', 
-                    borderRadius: '3px', 
-                    marginLeft: '0.5rem' 
-                  }}>
-                    🏷️ {entidadSeleccionada}
-                  </span>
-                )}
+          {totalResultados > 0 && (
+            <div style={resultsSummaryStyle}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span>
+                  📊 Encontrados <strong>{totalResultados}</strong> resultados 
+                  (Página {paginaActual} de {totalPaginas})
+                </span>
+                
+                {/* Indicadores de filtros activos */}
+                <div style={{ fontSize: '0.85rem' }}>
+                  {categoriaSeleccionada && (
+                    <span style={{ 
+                      backgroundColor: '#007bff', 
+                      color: 'white', 
+                      padding: '0.2rem 0.5rem', 
+                      borderRadius: '3px', 
+                      marginLeft: '0.5rem' 
+                    }}>
+                      📂 {categoriaSeleccionada}
+                    </span>
+                  )}
+                  {autorBusqueda && (
+                    <span style={{ 
+                      backgroundColor: '#28a745', 
+                      color: 'white', 
+                      padding: '0.2rem 0.5rem', 
+                      borderRadius: '3px', 
+                      marginLeft: '0.5rem' 
+                    }}>
+                      👤 {autorBusqueda}
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
-          </div>
+          )}
 
-          {/* ✅ LISTA DE ARTÍCULOS CON HIGHLIGHTING */}
+          {/* Lista de artículos */}
           <div style={articlesListStyle}>
-            {(resultados || []).map((articulo, index) => {
-              // ✅ USAR SEARCH TERMS CALCULADOS ARRIBA
-              return (
-                <div
-                  key={articulo._id || index}
-                  style={articleCardStyle}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.backgroundColor = '#f8f9fa';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.backgroundColor = '#ffffff';
-                  }}
-                >
-                  <div style={articleTitleStyle}>
-                    <HighlightText 
-                      text={String(articulo.rel_title || articulo.jobId || 'Sin título')}
-                      searchTerms={searchTerms}
-                    />
-                  </div>
-                  
-                  <div style={articleAuthorStyle}>
-                    👤 <HighlightText 
-                      text={String(articulo.author_name || 'Autor desconocido')}
-                      searchTerms={searchTerms}
-                    />
-                    {articulo.author_inst && ` - ${articulo.author_inst}`}
-                  </div>
-                  
-                  <div style={articleAbstractStyle}>
-                    <HighlightText 
-                      text={String(articulo.rel_abs || 'Sin contenido disponible')}
-                      searchTerms={searchTerms}
-                    />
-                  </div>
-                  
-                  <div style={articleMetaStyle}>
+            {resultados.map((articulo, index) => (
+              <div
+                key={articulo._id || index}
+                style={articleCardStyle}
+                onClick={() => navegarADocumento(articulo._id)}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = '#f8f9fa';
+                  e.currentTarget.style.transform = 'translateY(-1px)';
+                  e.currentTarget.style.boxShadow = '0 4px 8px rgba(0,0,0,0.1)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = '#ffffff';
+                  e.currentTarget.style.transform = 'translateY(0)';
+                  e.currentTarget.style.boxShadow = 'none';
+                }}
+              >
+                <div style={articleTitleStyle}>
+                  <HighlightText 
+                    text={articulo.rel_title || 'Sin título'}
+                    searchTerms={searchTerms}
+                  />
+                </div>
+                
+                <div style={articleAuthorStyle}>
+                  👤 <HighlightText 
+                    text={articulo.author_name || 'Autor desconocido'}
+                    searchTerms={searchTerms}
+                  />
+                  {articulo.rel_authors && articulo.rel_authors.length > 1 && (
+                    <span style={{color: '#999', fontSize: '0.8rem'}}>
+                      {' '}(+{articulo.rel_authors.length - 1} coautores)
+                    </span>
+                  )}
+                </div>
+                
+                <div style={articleAbstractStyle}>
+                  <HighlightText 
+                    text={articulo.rel_abs || articulo.resumen || 'Sin resumen disponible'}
+                    searchTerms={searchTerms}
+                  />
+                </div>
+                
+                <div style={articleMetaStyle}>
+                  <div style={{marginBottom: '0.25rem'}}>
                     📂 <HighlightText 
-                      text={String(articulo.category || 'Sin categoría')}
+                      text={articulo.category || 'Sin categoría'}
                       searchTerms={searchTerms}
                     /> | 
-                    📅 {articulo.rel_date ? new Date(articulo.rel_date).toLocaleDateString() : 'Sin fecha'} | 
+                    📅 {articulo.rel_date ? new Date(articulo.rel_date).toLocaleDateString('es-ES') : 'Sin fecha'} | 
                     ⭐ Score: {articulo.score?.toFixed(2) || '0.00'}
-                    {articulo.entities && articulo.entities.length > 0 && (
-                      <div style={{ marginTop: '0.25rem', fontSize: '0.75rem' }}>
-                        🏷️ {articulo.entities.slice(0, 5).join(', ')}
-                        {articulo.entities.length > 5 && '...'}
-                      </div>
-                    )}
-                    {articulo.highlights && articulo.highlights.length > 0 && (
-                      <div style={{ marginTop: '0.25rem', fontSize: '0.75rem', color: '#007bff' }}>
-                        ✨ Coincidencias encontradas en el texto
-                      </div>
+                    {articulo.type && (
+                      <> | 📄 {articulo.type}</>
                     )}
                   </div>
+                  
+                  {/* Entidades si existen */}
+                  {articulo.entities && articulo.entities.length > 0 && (
+                    <div style={{ marginTop: '0.5rem' }}>
+                      🏷️ {articulo.entities.slice(0, 5).map((entity, idx) => (
+                        <span key={idx} style={entitiesStyle}>
+                          {entity}
+                        </span>
+                      ))}
+                      {articulo.entities.length > 5 && (
+                        <span style={{color: '#666', fontSize: '0.75rem'}}>
+                          +{articulo.entities.length - 5} más
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  
+                  {/* Highlights si existen */}
+                  {articulo.highlights && articulo.highlights.length > 0 && (
+                    <div style={{ marginTop: '0.25rem', fontSize: '0.75rem', color: '#007bff' }}>
+                      ✨ Texto coincidente encontrado
+                    </div>
+                  )}
+                  
+                  {/* Links si existen */}
+                  {(articulo.rel_link || articulo.rel_doi) && (
+                    <div style={{ marginTop: '0.25rem', fontSize: '0.75rem' }}>
+                      {articulo.rel_doi && <span style={{color: '#28a745'}}>🔗 DOI disponible</span>}
+                      {articulo.rel_link && <span style={{color: '#17a2b8', marginLeft: '0.5rem'}}>🌐 Enlace original</span>}
+                    </div>
+                  )}
                 </div>
-              );
-            })}
+              </div>
+            ))}
 
             {/* Mensaje cuando no hay resultados */}
             {resultados.length === 0 && !cargando && (
-              <div style={{ padding: '2rem', textAlign: 'center', color: '#666666' }}>
+              <div style={{ padding: '3rem', textAlign: 'center' as const, color: '#666666' }}>
                 <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>🔍</div>
-                <div style={{ fontSize: '1.2rem', marginBottom: '0.5rem' }}>
+                <div style={{ fontSize: '1.2rem', marginBottom: '0.5rem', fontWeight: '500' }}>
                   No se encontraron artículos
                 </div>
                 <div style={{ fontSize: '0.9rem' }}>
@@ -676,7 +719,7 @@ const realizarBusqueda = async () => {
             )}
           </div>
 
-          {/* ✅ PAGINACIÓN MEJORADA */}
+          {/* Paginación */}
           {totalPaginas > 1 && (
             <div style={paginationStyle}>
               <button

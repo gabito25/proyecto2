@@ -1,4 +1,4 @@
-// frontend/src/api.ts
+// frontend/src/services/api.ts
 export interface Article {
   _id: string;
   rel_title: string;
@@ -12,6 +12,12 @@ export interface Article {
   author_name: string;
   resumen: string;
   score?: number;
+  // Campos adicionales para compatibilidad con pagina_documento
+  entities?: string[];
+  content?: string;
+  jobId?: string;
+  highlights?: any[];
+  author_inst?: string;
 }
 
 export interface SearchResponse {
@@ -40,12 +46,19 @@ export interface AuthResponse {
   mensaje?: string;
 }
 
+export interface DocumentResponse {
+  exito: boolean;
+  datos: Article;
+  mensaje?: string;
+  error?: string;
+}
+
 // Configuración de la API
 const API_BASE_URL = process.env.NODE_ENV === 'production' 
-  ? 'https://proyecto2-git-main-gabriels-projects-137ca855.vercel.app'
+  ? 'https://proyecto2-git-main-gabriels-projects-137ca855.vercel.app'  // Tu backend en Vercel
   : 'http://localhost:3000';
 
-// Cliente HTTP básico  
+// Cliente HTTP básico
 class ApiClient {
   private baseURL: string;
   private token: string | null = null;
@@ -55,7 +68,7 @@ class ApiClient {
     this.token = localStorage.getItem('auth_token');
   }
 
-  private async request<T>(
+  async request<T>(
     endpoint: string,
     options: RequestInit = {}
   ): Promise<T> {
@@ -138,6 +151,11 @@ class ApiClient {
     return this.request<SearchResponse>(`/busqueda/articulos?${params}`);
   }
 
+  // Método para obtener documento por ID
+  async getDocumento(documentoId: string): Promise<DocumentResponse> {
+    return this.request<DocumentResponse>(`/documento/${documentoId}`);
+  }
+
   // Método de health check
   async healthCheck(): Promise<{ status: string; timestamp: string }> {
     return this.request('/health');
@@ -151,6 +169,12 @@ class ApiClient {
   // Obtener token actual
   getToken(): string | null {
     return this.token;
+  }
+
+  // Actualizar token (útil para refrescar la sesión)
+  setToken(token: string): void {
+    this.token = token;
+    localStorage.setItem('auth_token', token);
   }
 }
 
@@ -179,5 +203,7 @@ export const healthCheck = () => apiClient.healthCheck();
 export const isAuthenticated = () => apiClient.isAuthenticated();
 
 export const getToken = () => apiClient.getToken();
+
+export const getDocumento = (documentoId: string) => apiClient.getDocumento(documentoId);
 
 export default apiClient;

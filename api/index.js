@@ -188,7 +188,7 @@ const allowedOrigins = [
   'https://biorxiv-git-main-gabriels-projects-137ca855.vercel.app',
   'https://biorxiv-hsggfxfqr-gabriels-projects-137ca855.vercel.app', // ← AGREGAR ESTA LÍNEA
   'http://localhost:5173',
-  'http://localhost:3000'
+  'http://localhost:3000' 
 ];
 
 app.use(helmet({
@@ -701,6 +701,97 @@ app.get('/busqueda/articulos', authMiddleware, async (req, res) => {
     res.status(500).json({ 
       exito: false, 
       error: 'Error al realizar la búsqueda',
+      detalles: error.message
+    });
+  }
+});
+
+// ===============================
+// RUTA PARA OBTENER DOCUMENTO POR ID
+// ===============================
+
+app.get('/documento/:id', authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    console.log('📄 Obteniendo documento por ID:', id);
+
+    if (!id) {
+      return res.status(400).json({
+        exito: false,
+        error: 'ID de documento requerido'
+      });
+    }
+
+    const mongoDb = await connectToMongoDB();
+    const collection = mongoDb.collection('documents');
+
+    // Buscar por ObjectId o por string
+    let documento;
+    
+    try {
+      // Intentar buscar por ObjectId
+      if (ObjectId.isValid(id)) {
+        documento = await collection.findOne({ _id: new ObjectId(id) });
+      }
+      
+      // Si no se encuentra, buscar por string ID
+      if (!documento) {
+        documento = await collection.findOne({ _id: id });
+      }
+      
+      // Si aún no se encuentra, buscar por jobId
+      if (!documento) {
+        documento = await collection.findOne({ jobId: id });
+      }
+
+    } catch (error) {
+      console.error('Error buscando documento:', error);
+    }
+
+    if (!documento) {
+      return res.status(404).json({
+        exito: false,
+        error: 'Documento no encontrado',
+        mensaje: `No se encontró un documento con ID: ${id}`
+      });
+    }
+
+    // Formatear el documento para que coincida con la interfaz Article
+    const documentoFormateado = {
+      _id: documento._id.toString(),
+      rel_title: documento.rel_title || 'Sin título',
+      rel_abs: documento.rel_abs || 'Sin resumen',
+      rel_authors: documento.rel_authors || [],
+      rel_date: documento.rel_date || '',
+      rel_link: documento.rel_link || '',
+      rel_doi: documento.rel_doi || '',
+      category: documento.category || 'General',
+      type: documento.type || 'Article',
+      author_name: documento.rel_authors && documento.rel_authors.length > 0 
+        ? documento.rel_authors[0] 
+        : 'Autor desconocido',
+      resumen: documento.rel_abs || 'Sin resumen disponible',
+      entities: documento.entities || [],
+      content: documento.content || '',
+      jobId: documento.jobId,
+      score: documento.score,
+      highlights: documento.highlights
+    };
+
+    console.log('✅ Documento encontrado:', documentoFormateado.rel_title);
+
+    res.status(200).json({
+      exito: true,
+      datos: documentoFormateado,
+      mensaje: 'Documento obtenido exitosamente'
+    });
+
+  } catch (error) {
+    console.error('❌ Error obteniendo documento:', error);
+    res.status(500).json({
+      exito: false,
+      error: 'Error interno del servidor',
       detalles: error.message
     });
   }

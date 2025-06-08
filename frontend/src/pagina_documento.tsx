@@ -2,29 +2,14 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from './AuthContext';
 import { HighlightText, highlightStyles } from './utils/highlight';
 import { useEffect, useState } from 'react';
-import { buildApiUrl, API_ENDPOINTS } from './services/api';
-
-interface Documento {
-  _id: string;
-  rel_title: string;
-  rel_abs: string;
-  author_name: string;
-  author_inst: string;
-  category: string;
-  rel_date: string;
-  entities: string[];
-  content: string;
-  jobId?: string;
-  score?: number;
-  highlights?: any[];
-}
+import { getDocumento, Article } from './services/api';
 
 const Pagina_documento: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { usuario, token } = useAuth();
   
-  const [documento, setDocumento] = useState<Documento | null>(null);
+  const [documento, setDocumento] = useState<Article | null>(null);
   const [cargando, setCargando] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -50,21 +35,10 @@ const Pagina_documento: React.FC = () => {
         return;
       }
 
-      // ✅ URL CORREGIDA PARA VERCEL
-      const response = await fetch(buildApiUrl(API_ENDPOINTS.GET_DOCUMENT(documentoId)), {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      });
+      // Usar la función getDocumento
+      const data = await getDocumento(documentoId);
 
-      const data = await response.json();
       console.log('📦 Respuesta del documento:', data);
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Error al cargar el documento');
-      }
 
       if (data.exito) {
         setDocumento(data.datos);
@@ -100,6 +74,21 @@ const Pagina_documento: React.FC = () => {
       });
     } catch {
       return fecha;
+    }
+  };
+
+  // Función para abrir DOI en nueva ventana
+  const abrirDOI = (doi: string) => {
+    if (doi) {
+      const url = doi.startsWith('http') ? doi : `https://doi.org/${doi}`;
+      window.open(url, '_blank', 'noopener,noreferrer');
+    }
+  };
+
+  // Función para abrir enlace original
+  const abrirEnlace = (enlace: string) => {
+    if (enlace) {
+      window.open(enlace, '_blank', 'noopener,noreferrer');
     }
   };
 
@@ -216,6 +205,14 @@ const Pagina_documento: React.FC = () => {
     fontWeight: '500'
   };
 
+  const metaValueLinkStyle: React.CSSProperties = {
+    fontSize: '1rem',
+    color: '#007bff',
+    fontWeight: '500',
+    cursor: 'pointer',
+    textDecoration: 'underline'
+  };
+
   const sectionStyle: React.CSSProperties = {
     marginBottom: '2rem'
   };
@@ -257,6 +254,23 @@ const Pagina_documento: React.FC = () => {
     border: '1px solid #bbdefb'
   };
 
+  const authorsContainerStyle: React.CSSProperties = {
+    display: 'flex',
+    flexWrap: 'wrap' as const,
+    gap: '0.5rem',
+    marginTop: '0.5rem'
+  };
+
+  const authorTagStyle: React.CSSProperties = {
+    backgroundColor: '#e8f5e8',
+    color: '#2e7d32',
+    padding: '0.25rem 0.5rem',
+    borderRadius: '12px',
+    fontSize: '0.8rem',
+    fontWeight: '500',
+    border: '1px solid #c8e6c9'
+  };
+
   const loadingStyle: React.CSSProperties = {
     display: 'flex',
     flexDirection: 'column' as const,
@@ -276,6 +290,23 @@ const Pagina_documento: React.FC = () => {
     border: '1px solid #f5c6cb',
     textAlign: 'center' as const,
     fontSize: '1rem'
+  };
+
+  const linkButtonStyle: React.CSSProperties = {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+    backgroundColor: '#28a745',
+    color: 'white',
+    padding: '0.5rem 1rem',
+    borderRadius: '6px',
+    border: 'none',
+    cursor: 'pointer',
+    fontSize: '0.9rem',
+    fontWeight: '500',
+    textDecoration: 'none',
+    transition: 'all 0.2s ease',
+    marginTop: '1rem'
   };
 
   if (cargando) {
@@ -383,25 +414,23 @@ const Pagina_documento: React.FC = () => {
           <div style={metaGridStyle}>
             <div style={metaItemStyle}>
               <span style={metaLabelStyle}>
-                <span>👤</span> Autor
+                <span>👤</span> Autor Principal
               </span>
               <span style={metaValueStyle}>{documento.author_name || 'Autor desconocido'}</span>
             </div>
-            
-            {documento.author_inst && (
-              <div style={metaItemStyle}>
-                <span style={metaLabelStyle}>
-                  <span>🏛️</span> Institución
-                </span>
-                <span style={metaValueStyle}>{documento.author_inst}</span>
-              </div>
-            )}
             
             <div style={metaItemStyle}>
               <span style={metaLabelStyle}>
                 <span>📂</span> Categoría
               </span>
               <span style={metaValueStyle}>{documento.category || 'General'}</span>
+            </div>
+            
+            <div style={metaItemStyle}>
+              <span style={metaLabelStyle}>
+                <span>📄</span> Tipo
+              </span>
+              <span style={metaValueStyle}>{documento.type || 'Artículo'}</span>
             </div>
             
             <div style={metaItemStyle}>
@@ -420,21 +449,52 @@ const Pagina_documento: React.FC = () => {
               </div>
             )}
             
+            {documento.rel_doi && (
+              <div style={metaItemStyle}>
+                <span style={metaLabelStyle}>
+                  <span>🔗</span> DOI
+                </span>
+                <span 
+                  style={metaValueLinkStyle} 
+                  onClick={() => abrirDOI(documento.rel_doi)}
+                  title="Hacer clic para abrir DOI"
+                >
+                  {documento.rel_doi}
+                </span>
+              </div>
+            )}
+            
             {documento.jobId && (
               <div style={metaItemStyle}>
                 <span style={metaLabelStyle}>
-                  <span>🆔</span> ID
+                  <span>🆔</span> Job ID
                 </span>
                 <span style={metaValueStyle}>{documento.jobId}</span>
               </div>
             )}
           </div>
 
+          {/* Todos los autores */}
+          {documento.rel_authors && documento.rel_authors.length > 0 && (
+            <div style={sectionStyle}>
+              <span style={metaLabelStyle}>
+                <span>👥</span> Autores ({documento.rel_authors.length})
+              </span>
+              <div style={authorsContainerStyle}>
+                {documento.rel_authors.map((author, index) => (
+                  <span key={index} style={authorTagStyle}>
+                    {author}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Entidades */}
           {documento.entities && documento.entities.length > 0 && (
             <div style={sectionStyle}>
               <span style={metaLabelStyle}>
-                <span>🏷️</span> Entidades
+                <span>🏷️</span> Entidades ({documento.entities.length})
               </span>
               <div style={entitiesContainerStyle}>
                 {documento.entities.map((entity, index) => (
@@ -444,6 +504,17 @@ const Pagina_documento: React.FC = () => {
                 ))}
               </div>
             </div>
+          )}
+
+          {/* Enlaces externos */}
+          {documento.rel_link && (
+            <button 
+              style={linkButtonStyle}
+              onClick={() => abrirEnlace(documento.rel_link)}
+              title="Abrir artículo original"
+            >
+              <span>🌐</span> Ver artículo original
+            </button>
           )}
         </div>
 
@@ -456,7 +527,7 @@ const Pagina_documento: React.FC = () => {
             <div style={contentTextStyle}>
               <HighlightText 
                 text={documento.rel_abs}
-                searchTerms={[]} // No hay términos de búsqueda definidos
+                searchTerms={[]} // No hay términos de búsqueda definidos aquí
                 highlightStyle={highlightStyles.abstract}
               />
             </div>
@@ -467,17 +538,33 @@ const Pagina_documento: React.FC = () => {
         {documento.content && (
           <div style={sectionStyle}>
             <h2 style={sectionTitleStyle}>
-              <span>📄</span> Contenido
+              <span>📄</span> Contenido Completo
             </h2>
             <div style={contentTextStyle}>
               {documento.content.split('\n').map((paragraph, index) => (
-                <p key={index} style={{ marginBottom: '1rem', margin: 0 }}>
+                <p key={index} style={{ marginBottom: '1rem', margin: '0 0 1rem 0' }}>
                   <HighlightText 
                     text={paragraph || '\u00A0'}
-                    searchTerms={[]} // No hay términos de búsqueda definidos
+                    searchTerms={[]} // No hay términos de búsqueda definidos aquí
                     highlightStyle={highlightStyles.content}
                   />
                 </p>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Información adicional si está disponible */}
+        {documento.highlights && documento.highlights.length > 0 && (
+          <div style={sectionStyle}>
+            <h2 style={sectionTitleStyle}>
+              <span>✨</span> Fragmentos Destacados
+            </h2>
+            <div style={contentTextStyle}>
+              {documento.highlights.map((highlight, index) => (
+                <div key={index} style={{ marginBottom: '1rem' }}>
+                  <strong>{highlight.path}:</strong> {highlight.texts?.join(' ') || 'N/A'}
+                </div>
               ))}
             </div>
           </div>
@@ -488,4 +575,3 @@ const Pagina_documento: React.FC = () => {
 };
 
 export default Pagina_documento;
-
